@@ -19,13 +19,6 @@
 #include "Core/Profile/Profile.h"
 #include "Core/Strings/AStackString.h"
 
-// Defines
-//------------------------------------------------------------------------------
-#if defined( __OSX__ ) || defined( __LINUX__ )
-    // Touch files every 4 hours
-    #define SERVER_TOOLCHAIN_TIMESTAMP_REFRESH_INTERVAL_SECS (60.0f * 60.0f * 4.0f)
-#endif
-
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
 Server::Server( uint32_t numThreadsInJobQueue )
@@ -171,7 +164,7 @@ bool Server::IsSynchingTool( AString & statusStr ) const
             const Job * const * jEnd = otherCS->m_WaitingJobs.End();
             for ( Job ** jIt = otherCS->m_WaitingJobs.Begin(); jIt != jEnd; ++jIt )
             {
-                const Job * j = *jIt;
+                Job * j = *jIt;
                 ToolManifest * jMan = j->GetToolManifest();
                 if ( cancelledManifests.Find( jMan ) )
                 {
@@ -289,7 +282,7 @@ bool Server::IsSynchingTool( AString & statusStr ) const
 void Server::Process( const ConnectionInfo * connection, const Protocol::MsgConnection * msg )
 {
     // check for valid/supported protocol version
-    if ( msg->GetProtocolVersion() != Protocol::PROTOCOL_VERSION_MAJOR )
+    if ( msg->GetProtocolVersion() != Protocol::PROTOCOL_VERSION )
     {
         AStackString<> remoteAddr;
         TCPConnectionPool::GetAddressAsString( connection->GetRemoteAddress(), remoteAddr );
@@ -354,7 +347,6 @@ void Server::Process( const ConnectionInfo * connection, const Protocol::MsgJob 
 
     Job * job = FNEW( Job( ms ) );
     job->SetUserData( cs );
-    job->SetResultCompressionLevel( msg->GetResultCompressionLevel() );
 
     //
     const uint64_t toolId = msg->GetToolId();
@@ -485,7 +477,7 @@ void Server::CheckWaitingJobs( const ToolManifest * manifest )
         for ( int32_t i=( numJobs -1 ); i >= 0; --i )
         {
             Job * job = cs->m_WaitingJobs[ (size_t)i ];
-            const ToolManifest * manifestForThisJob = job->GetToolManifest();
+            ToolManifest * manifestForThisJob = job->GetToolManifest();
             ASSERT( manifestForThisJob );
             if ( manifestForThisJob == manifest )
             {
@@ -509,7 +501,7 @@ void Server::CheckWaitingJobs( const ToolManifest * manifest )
 //------------------------------------------------------------------------------
 /*static*/ uint32_t Server::ThreadFuncStatic( void * param )
 {
-    PROFILE_SET_THREAD_NAME( "ServerThread" );
+    PROFILE_SET_THREAD_NAME( "ServerThread" )
 
     Server * s = (Server *)param;
     s->ThreadFunc();
@@ -525,8 +517,6 @@ void Server::ThreadFunc()
         FinalizeCompletedJobs();
 
         FindNeedyClients();
-        
-        TouchToolchains();
 
         JobQueueRemote::Get().MainThreadWait( 100 );
     }
@@ -541,7 +531,7 @@ void Server::FindNeedyClients()
         return;
     }
 
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     MutexHolder mh( m_ClientListMutex );
 
@@ -614,7 +604,7 @@ void Server::FindNeedyClients()
 //------------------------------------------------------------------------------
 void Server::FinalizeCompletedJobs()
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     JobQueueRemote & jcr = JobQueueRemote::Get();
     while ( Job * job = jcr.GetCompletedJob() )
@@ -637,7 +627,6 @@ void Server::FinalizeCompletedJobs()
             ms.Write( job->GetSystemErrorCount() > 0 );
             ms.Write( job->GetMessages() );
             ms.Write( job->GetNode()->GetLastBuildTime() );
-            ms.Write( job->GetRemoteThreadIndex() ); // The thread used to build the job to assist with visualization
 
             // write the data - build result for success, or output+errors for failure
             ms.Write( (uint32_t)job->GetDataSize() );
@@ -647,18 +636,8 @@ void Server::FinalizeCompletedJobs()
             ASSERT( cs->m_NumJobsActive );
             cs->m_NumJobsActive--;
 
-            if ( job->GetResultCompressionLevel() == 0 )
-            {
-                // Uncompressed
-                Protocol::MsgJobResult msg;
-                msg.Send( cs->m_Connection, ms );
-            }
-            else
-            {
-                // Compressed
-                Protocol::MsgJobResultCompressed msg;
-                msg.Send( cs->m_Connection, ms );
-            }
+            Protocol::MsgJobResult msg;
+            msg.Send( cs->m_Connection, ms );
         }
         else
         {
@@ -668,27 +647,6 @@ void Server::FinalizeCompletedJobs()
 
         FDELETE job;
     }
-}
-
-// TouchToolchains
-//------------------------------------------------------------------------------
-void Server::TouchToolchains()
-{
-    #if defined( __OSX__ ) || defined( __LINUX__)
-        if ( m_TouchToolchainTimer.GetElapsed() < SERVER_TOOLCHAIN_TIMESTAMP_REFRESH_INTERVAL_SECS )
-        {
-            return;
-        }
-        m_TouchToolchainTimer.Start();
-
-        MutexHolder manifestMH( m_ToolManifestsMutex );
-        for ( const ToolManifest * toolManifest : m_Tools )
-        {
-            toolManifest->TouchFiles();
-        }
-    #else
-        // TODO:C we could update Windows timestamps too
-    #endif
 }
 
 // RequestMissingFiles

@@ -4,12 +4,17 @@
 // Includes
 //------------------------------------------------------------------------------
 #include "ReflectionInfo.h"
-
-// Core
+#include "Core/Containers/AutoPtr.h"
+#include "Core/FileIO/ConstMemoryStream.h"
+#include "Core/FileIO/FileIO.h"
+#include "Core/FileIO/FileStream.h"
+#include "Core/FileIO/MemoryStream.h"
 #include "Core/Math/xxHash.h"
+#include "Core/Process/Process.h"
 #include "Core/Reflection/ReflectedProperty.h"
-#include "Core/Strings/AStackString.h"
 #include "Core/Strings/AString.h"
+#include "Core/Strings/AStackString.h"
+#include "Core/Tracing/Tracing.h"
 
 // System
 #include <memory.h>
@@ -32,9 +37,10 @@ ReflectionInfo::ReflectionInfo()
 //------------------------------------------------------------------------------
 ReflectionInfo::~ReflectionInfo()
 {
-    for ( ReflectedProperty * property : m_Properties )
+    auto end = m_Properties.End();
+    for ( auto it = m_Properties.Begin(); it != end; ++it )
     {
-        delete property;
+        delete *it;
     }
 
     const IMetaData * md = m_MetaDataChain;
@@ -233,11 +239,12 @@ const ReflectedProperty * ReflectionInfo::FindProperty( const char * name ) cons
 //------------------------------------------------------------------------------
 const ReflectedProperty * ReflectionInfo::FindPropertyRecurse( uint32_t nameCRC ) const
 {
-    for ( const ReflectedProperty * property : m_Properties )
+    auto end = m_Properties.End();
+    for ( auto it = m_Properties.Begin(); it != end; ++it )
     {
-        if ( property->GetNameCRC() == nameCRC )
+        if ( ( *it )->GetNameCRC() == nameCRC )
         {
-            return property;
+            return *it;
         }
     }
     if ( m_SuperClass )
@@ -258,7 +265,7 @@ void ReflectionInfo::SetArraySize( void * array, size_t size ) const
 
 // SetArraySizeV
 //------------------------------------------------------------------------------
-/*virtual*/ void ReflectionInfo::SetArraySizeV( void * /*array*/, size_t /*size*/ ) const
+/*virtual*/ void ReflectionInfo::SetArraySizeV( void * UNUSED( array ), size_t UNUSED( size ) ) const
 {
     ASSERT( false ); // Should be implemented by derived class!
 }

@@ -12,11 +12,6 @@ Compiler( 'Compiler-GCC' )
                                         'CC1PLUS_BINARY'
                                       }
     .CompilerFamily                 = 'gcc' // Specify compiler family explicitly because binary name may change at any moment
-
-    // Allow tests to activate some experimental behavior
-    #if ENABLE_SOURCE_MAPPING
-        .SourceMapping_Experimental = '/fastbuild-test-mapping'
-    #endif
 }
 
 // ToolChain
@@ -32,7 +27,6 @@ Compiler( 'Compiler-GCC' )
                                     + ' -g'             // Generate debug info
                                     + ' -m64'           // x86_64
                                     + ' -D__LINUX__'    // Platform define
-                                    + ' -D__X64__'      // Architecture define
                                     + ' -ffreestanding' // prevent extra magic includes like stdc-predefs.h
 
                                     // Include paths
@@ -45,7 +39,6 @@ Compiler( 'Compiler-GCC' )
 
     .CompilerOptions                = ' -std=c++11 $CommonCompilerOptions$'
                                     + ' -Wno-invalid-offsetof' // we get the offset of members in non-POD types
-                                    + ' -fdiagnostics-color=auto'
     .CompilerOptionsC               = ' -x c $CommonCompilerOptions$'
 
     // Librarian

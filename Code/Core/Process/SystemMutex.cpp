@@ -8,25 +8,25 @@
 
 // system
 #if defined( __WINDOWS__ )
-    #include "Core/Env/Assert.h"
     #include "Core/Env/WindowsHeader.h"
+    #include "Core/Env/Assert.h"
 #endif
 #if defined( __LINUX__ ) || defined( __APPLE__ )
     #include <errno.h>
-    #include <fcntl.h>
     #include <sys/file.h>
+    #include <fcntl.h>
     #include <unistd.h>
 #endif
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-SystemMutex::SystemMutex( const char * name )
+SystemMutex::SystemMutex( const char * name ) :
     #if defined( __WINDOWS__ )
-        : m_Handle( INVALID_HANDLE_VALUE )
+        m_Handle( INVALID_HANDLE_VALUE ),
     #elif defined( __LINUX__ ) || defined( __APPLE__ )
-        : m_Handle( -1 )
+        m_Handle( -1 ),
     #endif
-    , m_Name( name )
+    m_Name( name )
 {
 }
 
@@ -50,7 +50,7 @@ bool SystemMutex::TryLock()
         void * handle = (void *)CreateMutex( nullptr, TRUE, m_Name.Get() );
         if ( GetLastError() == ERROR_ALREADY_EXISTS )
         {
-            if ( ( handle != INVALID_HANDLE_VALUE ) && ( handle != nullptr ) )
+            if ( ( handle != INVALID_HANDLE_VALUE ) && ( handle != 0 ) )
             {
                 CloseHandle( handle );
             }

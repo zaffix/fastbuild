@@ -40,10 +40,8 @@ public:
     void MainThreadWait( uint32_t timeoutMS );
     void WakeMainThread();
 
-    // Worker threads can wait:
-    void WorkerThreadWait();    // Wait for a job to be available (active thread)
-    void WorkerThreadSleep();   // Sleep (inactive thread)
-
+    void WorkerThreadWait( uint32_t timeoutMS );
+    void WakeWorkers();
 private:
     // worker threads call these
     friend class WorkerThread;
@@ -65,7 +63,6 @@ private:
 
     Semaphore           m_MainThreadSemaphore;
     Semaphore           m_WorkerThreadSemaphore;
-    Semaphore           m_WorkerThreadSleepSemaphore;
 
     Array< WorkerThread * > m_Workers;
 };

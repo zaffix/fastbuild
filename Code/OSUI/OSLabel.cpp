@@ -28,9 +28,9 @@
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-OSLabel::OSLabel( OSWindow * parentWindow )
-    : OSWidget( parentWindow )
-    , m_Font( nullptr )
+OSLabel::OSLabel( OSWindow * parentWindow ) :
+    OSWidget( parentWindow ),
+    m_Font( nullptr )
 {
 }
 
@@ -55,9 +55,9 @@ void OSLabel::Init( int32_t x, int32_t y, uint32_t w, uint32_t h, const char * l
                                    x, y,
                                    (int32_t)w, (int32_t)h,
                                    (HWND)m_Parent->GetHandle(),
-                                   nullptr,
+                                   NULL,
                                    (HINSTANCE)m_Parent->GetHInstance(),
-                                   nullptr );
+                                   NULL );
 
         // Set font
         SendMessage( (HWND)m_Handle, WM_SETFONT, (WPARAM)m_Font->GetFont(), NULL );

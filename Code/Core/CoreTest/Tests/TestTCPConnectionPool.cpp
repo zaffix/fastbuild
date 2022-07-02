@@ -5,8 +5,7 @@
 //------------------------------------------------------------------------------
 #include "TestFramework/UnitTest.h"
 
-// Core
-#include "Core/Containers/UniquePtr.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/Network/TCPConnectionPool.h"
 #include "Core/Process/Atomic.h"
 #include "Core/Process/Semaphore.h"
@@ -57,15 +56,15 @@ private:
 // Helper Macros
 //------------------------------------------------------------------------------
 #define WAIT_UNTIL_WITH_TIMEOUT( cond )             \
-    do {                                            \
+    {                                               \
         Timer t;                                    \
         t.Start();                                  \
         while ( ( cond ) == false )                 \
         {                                           \
             Thread::Sleep( 1 );                     \
-            TEST_ASSERT( t.GetElapsed() < 30.0f );  \
+            TEST_ASSERT( t.GetElapsed() < 5.0f );   \
         }                                           \
-    } while( false )
+    }
 
 // Register Tests
 //------------------------------------------------------------------------------
@@ -84,7 +83,7 @@ void TestTestTCPConnectionPool::TestOneServerMultipleClients() const
 {
     const uint16_t testPort( TEST_PORT );
 
-    for ( uint32_t i = 0; i < NUM_TEST_PASSES; ++i )
+    for ( uint32_t i=0; i<NUM_TEST_PASSES; ++i )
     {
         // listen like a server
         TCPConnectionPool server;
@@ -116,7 +115,7 @@ void TestTestTCPConnectionPool::TestMultipleServersOneClient() const
 {
     const uint16_t testPort( TEST_PORT );
 
-    for ( uint32_t i = 0; i < NUM_TEST_PASSES; ++i )
+    for ( uint32_t i=0; i<NUM_TEST_PASSES; ++i )
     {
         // multiple servers
         TCPConnectionPool serverA;
@@ -156,7 +155,7 @@ void TestTestTCPConnectionPool::TestConnectionCount() const
 {
     const uint16_t testPort( TEST_PORT );
 
-    for ( uint32_t i = 0; i < NUM_TEST_PASSES; ++i )
+    for ( uint32_t i=0; i<NUM_TEST_PASSES; ++i )
     {
         // multiple servers
         TCPConnectionPool serverA;
@@ -201,8 +200,8 @@ void TestTestTCPConnectionPool::TestDataTransfer() const
     class TestServer : public TCPConnectionPool
     {
     public:
-        virtual ~TestServer() override { ShutdownAllConnections(); }
-        virtual void OnReceive( const ConnectionInfo *, void * data, uint32_t size, bool & ) override
+        ~TestServer() { ShutdownAllConnections(); }
+        virtual void OnReceive( const ConnectionInfo *, void * data, uint32_t size, bool & )
         {
             TEST_ASSERT( size == m_DataSize );
             TEST_ASSERT( memcmp( data, m_ExpectedData, size ) == 0 );
@@ -219,8 +218,8 @@ void TestTestTCPConnectionPool::TestDataTransfer() const
 
     // a big piece of data, initialized to some known pattern
     const size_t maxSendSize( 1024 * 1024 * 10 );
-    UniquePtr< char > data( (char *)ALLOC( maxSendSize ) );
-    for ( size_t i = 0; i < maxSendSize; ++i )
+    AutoPtr< char > data( (char *)ALLOC( maxSendSize ) );
+    for ( size_t i=0; i< maxSendSize; ++i )
     {
         data.Get()[ i ] = (char)i;
     }
@@ -272,8 +271,8 @@ void TestTestTCPConnectionPool::TestConnectionStuckDuringSend() const
     class SlowServer : public TCPConnectionPool
     {
     public:
-        virtual ~SlowServer() override { ShutdownAllConnections(); }
-        virtual void OnReceive( const ConnectionInfo *, void *, uint32_t, bool & ) override
+        ~SlowServer() { ShutdownAllConnections(); }
+        virtual void OnReceive( const ConnectionInfo *, void *, uint32_t, bool & )
         {
             Thread::Sleep( 200 );
         }
@@ -289,9 +288,9 @@ void TestTestTCPConnectionPool::TestConnectionStuckDuringSend() const
 
     // start a thread to flood the slow server
     Thread::ThreadHandle h = Thread::CreateThread( TestConnectionStuckDuringSend_ThreadFunc,
-                                                   "Sender",
-                                                   ( 64 * KILOBYTE ),
-                                                   (void *)ci );
+                                                    "Sender",
+                                                    ( 64 * KILOBYTE ),
+                                                    (void*)ci );
 
     // let thread send enough data to become blocked in Send
     Thread::Sleep( 100 );
@@ -311,14 +310,14 @@ void TestTestTCPConnectionPool::TestConnectionStuckDuringSend() const
 }
 /*static*/ uint32_t TestTestTCPConnectionPool::TestConnectionStuckDuringSend_ThreadFunc( void * userData )
 {
-    PROFILE_SET_THREAD_NAME( "ConnectionStuckSend" );
+    PROFILE_SET_THREAD_NAME( "ConnectionStuckSend" )
 
     const ConnectionInfo * ci = (const ConnectionInfo *)userData;
     TCPConnectionPool & client = ci->GetTCPConnectionPool();
     // send lots of data to slow server
-    UniquePtr< char > mem( (char *)ALLOC( 10 * MEGABYTE ) );
+    AutoPtr< char > mem( (char *)ALLOC( 10 * MEGABYTE ) );
     memset( mem.Get(), 0, 10 * MEGABYTE );
-    for ( size_t i = 0; i < 1000; ++i )
+    for ( size_t i=0; i<1000; ++i )
     {
         if ( !client.Send( ci, mem.Get(), 10 * MEGABYTE ) )
         {

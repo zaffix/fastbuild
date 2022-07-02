@@ -330,36 +330,24 @@ void XCodeProjectGenerator::WriteFiles()
     for ( const File * file : m_Files )
     {
         // Get just the filename part from the full path
-        const AString & shortName = file->m_FileName;
+        const char * shortName = file->m_FileName.Get();
 
         // work out file type based on extension
         // TODO: What is the definitive list of these?
         const char * lastKnownFileType = "sourcecode.cpp.cpp";
         const char * fileEncoding = " fileEncoding = 4;";
-        if ( shortName.EndsWithI( ".h" ) )
+        if ( file->m_FileName.EndsWithI( ".h" ) )
         {
             lastKnownFileType = "sourcecode.c.h";
         }
-        else if ( shortName.EndsWithI( ".xcodeproj" ))
+        else if ( file->m_FileName.EndsWithI( ".xcodeproj" ))
         {
             lastKnownFileType = "\"wrapper.pb-project\"";
             fileEncoding = "";
         }
 
-        const AString & fullPath = file->m_FullPath;
-
-        AStackString<> processedShortName;
-        AStackString<> processedFullPath;
-        ProcessFileName( shortName, processedShortName );
-        ProcessFileName( fullPath, processedFullPath );
-
         Write( "\t\t1111111111111111%08u /* %s */ = {isa = PBXFileReference;%s lastKnownFileType = %s; name = %s; path = %s; sourceTree = \"<group>\"; };\n",
-               file->m_SortedIndex,
-               shortName.Get(), // NOTE: Not quoted or escaped
-               fileEncoding,
-               lastKnownFileType,
-               processedShortName.Get(),
-               processedFullPath.Get() );
+                    file->m_SortedIndex, shortName, fileEncoding, lastKnownFileType, shortName, file->m_FullPath.Get() );
     }
     Write( "/* End PBXFileReference section */\n" );
 }
@@ -629,10 +617,6 @@ void XCodeProjectGenerator::WriteBuildConfiguration()
         {
             WriteString( 4, "SDKROOT", config.m_XCodeBaseSDK );
         }
-        if ( config.m_XCodeIphoneOSDeploymentTarget.IsEmpty() == false )
-        {
-            WriteString( 4, "IPHONEOS_DEPLOYMENT_TARGET", config.m_XCodeIphoneOSDeploymentTarget );
-        }
         Write( "\t\t\t};\n"
                "\t\t\tname = %s;\n"
                "\t\t};\n",
@@ -640,7 +624,7 @@ void XCodeProjectGenerator::WriteBuildConfiguration()
     }
 
     configId = 100;
-    for ( const ProjectGeneratorBaseConfig * config : m_Configs )
+    for ( const auto * config : m_Configs )
     {
         AStackString<> xcBuildConfigurationGUID;
         GetGUID_XCBuildConfiguration( configId, xcBuildConfigurationGUID );
@@ -662,7 +646,7 @@ void XCodeProjectGenerator::WriteBuildConfiguration()
     }
 
     configId = 200;
-    for ( const ProjectGeneratorBaseConfig * config : m_Configs )
+    for ( const auto * config : m_Configs )
     {
         AStackString<> xcBuildConfigurationGUID;
         GetGUID_XCBuildConfiguration( configId, xcBuildConfigurationGUID );
@@ -705,8 +689,7 @@ void XCodeProjectGenerator::WriteBuildConfiguration()
             // User Include Paths
             {
                 Array< AString > includePaths;
-                Array< AString > forceIncludePaths; // TODO:C Is there a place in XCode projects to put this?
-                ProjectGeneratorBase::ExtractIncludePaths( oln->GetCompilerOptions(), includePaths, forceIncludePaths, true );
+                ProjectGeneratorBase::ExtractIncludePaths( oln->GetCompilerOptions(), includePaths, true );
                 for ( AString & include : includePaths )
                 {
                     AStackString<> fullIncludePath;
@@ -748,7 +731,7 @@ void XCodeProjectGenerator::WriteConfigurationList()
         Write( "\t\t\tisa = XCConfigurationList;\n" );
         Write( "\t\t\tbuildConfigurations = (\n" );
         uint32_t configId( configStartIds[ i ] );
-        for ( const ProjectGeneratorBaseConfig * config : m_Configs )
+        for ( const auto * config : m_Configs )
         {
             AStackString<> xcBuildConfigurationGUID;
             GetGUID_XCBuildConfiguration( configId, xcBuildConfigurationGUID );
@@ -792,7 +775,6 @@ bool XCodeProjectGenerator::ShouldQuoteString( const AString & value ) const
              ( c == '"' ) ||
              ( c == '?' ) ||
              ( c == '-' ) ||
-             ( c == '+' ) ||
              ( c == '=' ) )
         {
             return true;
@@ -816,8 +798,8 @@ void XCodeProjectGenerator::WriteString( uint32_t indentDepth,
    
     // Empty strings and strings with spaces are quoted
     const char quoteString = ShouldQuoteString( value );
-    const char * const formatString = quoteString ? "%s%s = \"%s\";\n"
-                                                  : "%s%s = %s;\n";
+    const char * formatString = quoteString ? "%s%s = \"%s\";\n"
+                                            : "%s%s = %s;\n";
     Write( formatString, tabs.Get(), propertyName, value.Get() );
 }
 
@@ -849,8 +831,8 @@ void XCodeProjectGenerator::WriteArray( uint32_t indentDepth,
     {
         // Empty strings and strings with spaces are quoted
         const char quoteString = ShouldQuoteString( value );
-        const char * const formatString = quoteString ? "%s\t\"%s\",\n"
-                                                      : "%s\t%s,\n";
+        const char * formatString = quoteString ? "%s\t\"%s\",\n"
+                                                : "%s\t%s,\n";
         Write( formatString, tabs.Get(), value.Get() );
     }
     Write( "%s);\n", tabs.Get() );
@@ -873,62 +855,8 @@ void XCodeProjectGenerator::EscapeArgument( const AString & arg,
             default:
             {
                 outEscapedArgument += c;
-                break;
             }
         }
-    }
-}
-
-// ProcessFileName
-//------------------------------------------------------------------------------
-/*static*/ void XCodeProjectGenerator::ProcessFileName( const AString & fileName,
-                                                        AString & outFileName )
-{
-    // Filenames are quoted when certain characters are present. Additionally,
-    // certain characters are escaped.
-    // The rules for this appear to be different to other strings.
-
-    bool needsQuotes = false;
-    for ( char c : fileName )
-    {
-        // These characters are not escaped and don't require the string be quoted
-        if ( ( ( c >= 'a' ) && ( c <= 'z' ) ) ||
-             ( ( c >= 'A' ) && ( c <= 'Z' ) ) ||
-             ( ( c >= '0' ) && ( c <= '9' ) ) ||
-             ( c == '$' ) ||
-             ( c == '_' ) ||
-             ( c == '.' ) ||
-             ( c == '/' ) )
-        {
-            outFileName += c;
-            continue;
-        }
-
-        // Some characters must be escaped
-        if ( ( c == '\\' ) || ( c == '"' ) )
-        {
-            // Escape
-            outFileName += '\\';
-            outFileName += c;
-
-            // When there is an escaped character, the string is quoted
-            needsQuotes = true;
-            continue;
-        }
-
-        // All other characters require the string be quoted, but are not escaped
-        needsQuotes = true;
-        outFileName += c;
-    }
-
-    // Surround with quotes if needed
-    if ( needsQuotes )
-    {
-        AStackString<> tmp;
-        tmp += '\"';
-        tmp += outFileName;
-        tmp += '\"';
-        outFileName = tmp;
     }
 }
 

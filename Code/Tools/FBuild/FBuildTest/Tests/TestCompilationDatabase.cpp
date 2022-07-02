@@ -9,9 +9,9 @@
 #include "Tools/FBuild/FBuildCore/FBuild.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 #include "Tools/FBuild/FBuildCore/Helpers/CompilationDatabase.h"
-#include "Tools/FBuild/FBuildCore/Helpers/JSON.h"
 
-// Core
+#include "Core/Containers/AutoPtr.h"
+#include "Core/FileIO/FileStream.h"
 #include "Core/FileIO/PathUtils.h"
 #include "Core/Strings/AStackString.h"
 
@@ -49,7 +49,7 @@ REGISTER_TESTS_END
 class CompilationDatabaseTestWrapper : public CompilationDatabase
 {
 public:
-    static void JSONEscape( AString & string ) { JSON::Escape( string ); }
+    static void JSONEscape( AString & string ) { CompilationDatabase::JSONEscape( string ); }
     static void Unquote( AString & string )    { CompilationDatabase::Unquote( string ); }
 };
 
@@ -110,7 +110,7 @@ void TestCompilationDatabase::TestObjectListInputFile() const
         "    \"directory\": \"{WORKDIR}\",\n"
         "    \"file\": \"{TESTDIR}file.cpp\",\n"
         "    \"output\": \"{OUTDIR}file.result\",\n"
-        "    \"arguments\": [\"{TESTDIR}clang.exe\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}file.cpp\", \"-o\", \"{OUTDIR}file.result\"]\n"
+        "    \"arguments\": [\"{TESTDIR}clang\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}file.cpp\", \"-o\", \"{OUTDIR}file.result\"]\n"
         "  }\n"
         "]\n"
     );
@@ -126,7 +126,7 @@ void TestCompilationDatabase::TestObjectListInputPath() const
         "    \"directory\": \"{WORKDIR}\",\n"
         "    \"file\": \"{TESTDIR}dir{SLASH}subdir{SLASH}file.cpp\",\n"
         "    \"output\": \"{OUTDIR}subdir{SLASH}file.result\",\n"
-        "    \"arguments\": [\"{TESTDIR}clang.exe\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}dir{SLASH}subdir{SLASH}file.cpp\", \"-o\", \"{OUTDIR}subdir{SLASH}file.result\"]\n"
+        "    \"arguments\": [\"{TESTDIR}clang\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}dir{SLASH}subdir{SLASH}file.cpp\", \"-o\", \"{OUTDIR}subdir{SLASH}file.result\"]\n"
         "  }\n"
         "]\n"
     );
@@ -142,7 +142,7 @@ void TestCompilationDatabase::TestUnityInputFile() const
         "    \"directory\": \"{WORKDIR}\",\n"
         "    \"file\": \"{TESTDIR}file.cpp\",\n"
         "    \"output\": \"{OUTDIR}file.result\",\n"
-        "    \"arguments\": [\"{TESTDIR}clang.exe\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}file.cpp\", \"-o\", \"{OUTDIR}file.result\"]\n"
+        "    \"arguments\": [\"{TESTDIR}clang\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}file.cpp\", \"-o\", \"{OUTDIR}file.result\"]\n"
         "  }\n"
         "]\n"
     );
@@ -158,7 +158,7 @@ void TestCompilationDatabase::TestUnityInputPath() const
         "    \"directory\": \"{WORKDIR}\",\n"
         "    \"file\": \"{TESTDIR}dir{SLASH}subdir{SLASH}file.cpp\",\n"
         "    \"output\": \"{OUTDIR}subdir{SLASH}file.result\",\n"
-        "    \"arguments\": [\"{TESTDIR}clang.exe\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}dir{SLASH}subdir{SLASH}file.cpp\", \"-o\", \"{OUTDIR}subdir{SLASH}file.result\"]\n"
+        "    \"arguments\": [\"{TESTDIR}clang\", \"-c\", \"-Ipath with spaces\", \"-DSTRING_DEFINE=\\\"foobar\\\"\", \"{TESTDIR}dir{SLASH}subdir{SLASH}file.cpp\", \"-o\", \"{OUTDIR}subdir{SLASH}file.result\"]\n"
         "  }\n"
         "]\n"
     );
@@ -168,15 +168,22 @@ void TestCompilationDatabase::TestUnityInputPath() const
 //------------------------------------------------------------------------------
 void TestCompilationDatabase::DoTest( const char * bffFile, const char * target, const char * result ) const
 {
+    FileStream f;
+    TEST_ASSERT( f.Open( bffFile, FileStream::READ_ONLY ) );
+    uint32_t fileSize = (uint32_t)f.GetFileSize();
+    AutoPtr< char > mem( (char *)ALLOC( fileSize + 1 ) );
+    mem.Get()[ fileSize ] = '\000'; // parser requires sentinel
+    TEST_ASSERT( f.Read( mem.Get(), fileSize ) == fileSize );
+
     FBuild fBuild;
     NodeGraph ng;
     BFFParser p( ng );
-    TEST_ASSERT( p.ParseFromFile( bffFile ) );
+    TEST_ASSERT( p.Parse( mem.Get(), fileSize, bffFile, 0, 0 ) );
 
     Dependencies deps;
     Node * node = ng.FindNode( AStackString<>( target ) );
     TEST_ASSERT( node != nullptr );
-    deps.EmplaceBack( node );
+    deps.Append( Dependency( node ) );
 
     CompilationDatabase compdb;
     const AString & actualResult = compdb.Generate( ng, deps );

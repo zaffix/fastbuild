@@ -5,6 +5,14 @@
 //------------------------------------------------------------------------------
 #include "Tools/FBuild/FBuildTest/Tests/FBuildTest.h"
 
+#include "Tools/FBuild/FBuildCore/FBuild.h"
+#include "Tools/FBuild/FBuildCore/BFF/BFFParser.h"
+#include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
+
+#include "Core/Containers/AutoPtr.h"
+#include "Core/Env/Env.h"
+#include "Core/FileIO/FileStream.h"
+
 // TestIf
 //------------------------------------------------------------------------------
 class TestIf : public FBuildTest
@@ -23,11 +31,11 @@ private:
     void IfFunctionBool() const;
     void IfFunctionInt() const;
     void IfFunctionStringCompare() const;
-    void IfFunctionSet() const;
-    void IfFunctionBracket() const;
     void UsageError_ExtraTokensAfterExpression() const;
     void UsageError_UnsupportedTypeForIn() const;
     void UsageError_UnsupportedOperation() const;
+
+    void Parse( const char * fileName, bool expectFailure = false ) const;
 };
 
 // Register Tests
@@ -43,17 +51,11 @@ REGISTER_TESTS_BEGIN( TestIf )
     REGISTER_TEST( IfNotSetFunctionFalse )
     REGISTER_TEST( IfFunctionBool )
     REGISTER_TEST( IfFunctionInt )
-    REGISTER_TEST( IfFunctionSet )
     REGISTER_TEST( IfFunctionStringCompare )
-    REGISTER_TEST( IfFunctionBracket )
     REGISTER_TEST( UsageError_ExtraTokensAfterExpression )
     REGISTER_TEST( UsageError_UnsupportedTypeForIn )
     REGISTER_TEST( UsageError_UnsupportedOperation )
 REGISTER_TESTS_END
-
-#define TEST_EXP_TRUE( vars, exp )        TEST_ASSERT( ParseFromString( true, vars "\nIf ( " exp " )\n{\nPrint('Success')\n}", "Success") )
-#define TEST_EXP_FALSE( vars, exp )       TEST_ASSERT( ParseFromString( true, vars "\nIf ( " exp " )\n{\nPrint('Failure')\n}", nullptr, "Failure") )
-#define TEST_EXP_FAIL( vars, exp, error ) TEST_ASSERT( ParseFromString( false, vars "\nIf ( " exp " )\n{\n}", error ) )
 
 // IfFunctionTrue
 //------------------------------------------------------------------------------
@@ -123,46 +125,6 @@ void TestIf::IfNotSetFunctionFalse() const
 //------------------------------------------------------------------------------
 void TestIf::IfFunctionBool() const
 {
-    // Literals
-    TEST_EXP_TRUE( "", "true" );
-    TEST_EXP_FALSE( "", "false" );
-
-    // Unary
-    TEST_EXP_TRUE( "", "!false" );
-    TEST_EXP_FALSE( "", "!true" );
-    
-    // Binary
-    TEST_EXP_TRUE( "", "false != true" );
-
-    // Unary and Binary
-    TEST_EXP_TRUE( "", "!false == true" );
-    TEST_EXP_TRUE( "", "!true == false" );
-
-    // Vars
-    TEST_EXP_TRUE( ".Bool = true", ".Bool" );
-    TEST_EXP_TRUE( ".Bool = true", ".Bool != false" );
-    TEST_EXP_TRUE( ".Bool = true", "false != .Bool" );
-    TEST_EXP_FALSE( ".Bool = true", ".Bool != .Bool" );
-
-    // Compound Exps
-    TEST_EXP_TRUE( ".True = true\n .False = false", ".True && true || .False" );
-
-    TEST_EXP_TRUE( ".True = true\n .False = false", "true && .True && true || !false || .False" );
-
-    // Non-existent variables
-    TEST_EXP_FAIL( "", ".A == 'String'", "Unknown variable '.A'");
-    TEST_EXP_FAIL( ".Bool = true", ".Bool == .A", "Unknown variable '.A'" );
-
-    // Incorrect RHS operand type
-    TEST_EXP_FAIL( ".Bool = true\n .A = 1234", ".Bool == .A", "Property '.A' must be of type <Bool> (found <Int>)" );
-    TEST_EXP_FAIL( ".Bool = true\n .A = 'xy'", ".Bool == .A", "Property '.A' must be of type <Bool> (found <String>)" );
-    TEST_EXP_FAIL( ".Bool = true\n .A = {''}", ".Bool == .A", "Property '.A' must be of type <Bool> (found <ArrayOfStrings>)" );
-    TEST_EXP_FAIL( ".Bool = true\n .S = []\n .A = {.S}", ".Bool == .A", "Property '.A' must be of type <Bool> (found <ArrayOfStructs>)" );
-    // TODO: Currently produces error #1071 "Unexpected token" instead of #1050
-    TEST_EXP_FAIL( ".Bool = true", ".Bool == 12", "Error #1071" );
-    TEST_EXP_FAIL( ".Bool = true", ".Bool == ''", "Error #1071" );
-
-    // Legacy
     Parse( "Tools/FBuild/FBuildTest/Data/TestIf/if_function_boolean.bff" );
     TEST_ASSERT( GetRecordedOutput().Find( "Failure" ) == nullptr );
     TEST_ASSERT( GetRecordedOutput().Find( "Success" ) );
@@ -172,76 +134,6 @@ void TestIf::IfFunctionBool() const
 //------------------------------------------------------------------------------
 void TestIf::IfFunctionInt() const
 {
-    // Literals vs Literals
-    // Equality
-    TEST_EXP_TRUE( "", "2 == 2" );
-    TEST_EXP_TRUE( "", "2 != 1" );
-    TEST_EXP_FALSE( "", "2 == 1" );
-
-    // Less Than
-    TEST_EXP_TRUE( "", "2 < 3" );
-    TEST_EXP_TRUE( "", "2 <= 3" );
-    TEST_EXP_FALSE( "", "2 <= 1" );
-    
-    // Greater Than
-    TEST_EXP_TRUE( "", "2 > 1" );
-    TEST_EXP_TRUE( "", "2 >= 1" );
-    TEST_EXP_FALSE( "", "2 >= 3" );
-
-    // Vars vs Literals
-    // Equality
-    TEST_EXP_TRUE( ".Int = 2", ".Int == 2" );
-    TEST_EXP_FALSE( ".Int = 2", ".Int == 1" );
-
-    // Less Than
-    TEST_EXP_TRUE( ".Int = 2", ".Int < 3" );
-    TEST_EXP_TRUE( ".Int = 2", ".Int <= 3" );
-    TEST_EXP_TRUE( ".Int = 2", ".Int <= 2" );
-    TEST_EXP_TRUE( ".Int = 2", "1 < .Int" );
-    TEST_EXP_TRUE( ".Int = 2", "1 <= .Int" );
-    TEST_EXP_TRUE( ".Int = 2", "2 <= .Int" );
-    TEST_EXP_FALSE( ".Int = 2", ".Int >= 3" );
-
-    // Greater Than
-    TEST_EXP_TRUE( ".Int = 2", ".Int > 1" );
-    TEST_EXP_TRUE( ".Int = 2", ".Int >= 1" );
-    TEST_EXP_TRUE( ".Int = 2", ".Int >= 2" );
-    TEST_EXP_TRUE( ".Int = 2", "3 > .Int" );
-    TEST_EXP_TRUE( ".Int = 2", "3 >= .Int" );
-    TEST_EXP_TRUE( ".Int = 2", "2 >= .Int" );
-    TEST_EXP_FALSE( ".Int = 2", "1 >= .Int" );
-
-    // Vars vs Vars
-#define VARS \
-    ".IntA = 7\n" \
-    ".IntB = 100\n"
-
-    // Equality
-    TEST_EXP_FALSE( VARS, ".IntA == .IntB" );
-    TEST_EXP_TRUE( VARS, ".IntA != .IntB" );
-
-    // Less Than
-    TEST_EXP_FALSE( VARS, ".IntB < .IntA" );
-    TEST_EXP_FALSE( VARS, ".IntB <= .IntA" );
-
-    // Greater Than
-    TEST_EXP_FALSE( VARS, ".IntA > .IntB" );
-    TEST_EXP_FALSE( VARS, ".IntA >= .IntB" );
-
-#undef VARS
-
-    // Non-existent variable
-    TEST_EXP_FAIL( ".Int = 1", ".Int == .A", "Unknown variable '.A'" );
-
-    // Incorrect RHS operand type
-    TEST_EXP_FAIL( ".Int = 1\n .A = true", ".Int == .A", "Property '.A' must be of type <Int> (found <Bool>)" );
-    TEST_EXP_FAIL( ".Int = 1\n .A = 'xy'", ".Int == .A", "Property '.A' must be of type <Int> (found <String>)" );
-    TEST_EXP_FAIL( ".Int = 1\n .A = {''}", ".Int == .A", "Property '.A' must be of type <Int> (found <ArrayOfStrings>)" );
-    TEST_EXP_FAIL( ".Int = 1\n .S = []\n .A = {.S}", ".Int == .A", "Property '.A' must be of type <Int> (found <ArrayOfStructs>)" );
-    TEST_EXP_FAIL( ".Int = 1", ".Int == true", "Property '<literal>' must be of type <Int> (found <Bool>)" );
-    TEST_EXP_FAIL( ".Int = 1", ".Int == 'xy'", "Property '<literal>' must be of type <Int> (found <String>)" );
-
-    // Legacy
     Parse( "Tools/FBuild/FBuildTest/Data/TestIf/if_function_int.bff" );
     TEST_ASSERT( GetRecordedOutput().Find( "Failure" ) == nullptr );
     TEST_ASSERT( GetRecordedOutput().Find( "Success" ) );
@@ -251,158 +143,17 @@ void TestIf::IfFunctionInt() const
 //------------------------------------------------------------------------------
 void TestIf::IfFunctionStringCompare() const
 {
-    // Literals vs Literals
-    TEST_EXP_TRUE( "", "'2' == '2'" );
-    TEST_EXP_TRUE( "", "'2' != '1'" );
-    TEST_EXP_FALSE( "", "'2' == '1'" );
-
-    TEST_EXP_TRUE( "", "'2' > '1'" );
-    TEST_EXP_TRUE( "", "'2' >= '1'" );
-    TEST_EXP_TRUE( "", "'2' < '3'" );
-    TEST_EXP_TRUE( "", "'2' <= '3'" );
-
-    // Vars vs Literals
-    TEST_EXP_TRUE( ".String = '2'", ".String == '2'" );
-    TEST_EXP_TRUE( ".String = '2'", ".String != '1'" );
-    TEST_EXP_FALSE( ".String = '2'", ".String == '1'" );
-
-    TEST_EXP_TRUE( ".String = '2'", ".String > '1'" );
-    TEST_EXP_TRUE( ".String = '2'", ".String >= '1'" );
-    TEST_EXP_TRUE( ".String = '2'", ".String >= '2'" );
-    TEST_EXP_TRUE( ".String = '2'", "'3' > .String" );
-    TEST_EXP_TRUE( ".String = '2'", "'3' >= .String" );
-    TEST_EXP_TRUE( ".String = '2'", "'2' >= .String" );
-
-    TEST_EXP_FALSE( ".String = '2'", "'2' > .String" );
-    TEST_EXP_FALSE( ".String = '2'", "'1' >= .String" );
-
-    TEST_EXP_TRUE( ".String = '2'", "'1' < .String" );
-    TEST_EXP_TRUE( ".String = '2'", "'1' <= .String" );
-
-#define VARS \
-    ".String = 'Hello'\n" \
-    ".OtherStringA = 'Hello'\n" \
-    ".OtherStringB = 'Goodbye'\n"
-
-    // Strings match
-    TEST_EXP_TRUE( VARS, ".String == .OtherStringA" );
-    TEST_EXP_FALSE( VARS, ".String != .OtherStringA" );
-
-    // Strings don't match
-    TEST_EXP_FALSE( VARS, ".String == .OtherStringB" );
-    TEST_EXP_TRUE( VARS, ".String != .OtherStringB" );
-
-#undef VARS
-
-    // String compare
-#define VARS \
-    ".StringA = 'AAA'\n" \
-    ".StringB = 'BBB'\n"
-
-    TEST_EXP_FALSE( VARS, ".StringA > .StringB" );
-    TEST_EXP_FALSE( VARS, ".StringA >= .StringB" );
-    TEST_EXP_FALSE( VARS, ".StringB < .StringA" );
-    TEST_EXP_FALSE( VARS, ".StringB <= .StringA" );
-
-#undef VARS
-
-    // Non-existent variable
-    TEST_EXP_FAIL( ".String = ''", ".String == .A", "Unknown variable '.A'" );
-
-    // Incorrect RHS operand type
-    TEST_EXP_FAIL( ".String = ''\n .A = true", ".String == .A", "Property '.A' must be of type <String> (found <Bool>)" );
-    TEST_EXP_FAIL( ".String = ''\n .A = 1234", ".String == .A", "Property '.A' must be of type <String> (found <Int>)" );
-    TEST_EXP_FAIL( ".String = ''\n .A = {''}", ".String == .A", "Property '.A' must be of type <String> (found <ArrayOfStrings>)" );
-    TEST_EXP_FAIL( ".String = ''\n .S = []\n .A = {.S}", ".String == .A", "Property '.A' must be of type <String> (found <ArrayOfStructs>)" );
-    // TODO: Currently produces error #1071 "Unexpected token" instead of #1050
-    TEST_EXP_FAIL( ".String = ''", ".String == true", "Error #1071" );
-    TEST_EXP_FAIL( ".String = ''", ".String == 1234", "Error #1071" );
-
-    // Legacy
     Parse( "Tools/FBuild/FBuildTest/Data/TestIf/if_function_stringcompare.bff" );
     TEST_ASSERT( GetRecordedOutput().Find( "Failure" ) == nullptr );
     TEST_ASSERT( GetRecordedOutput().Find( "Success" ) );
 }
-
-// IfFunctionSet
-//------------------------------------------------------------------------------
-void TestIf::IfFunctionSet() const
-{
-#define VARS \
-    ".D = 'd'\n" \
-    ".A = {'a'}\n" \
-    ".AD = {'a', 'd'}\n" \
-    ".ABC = {'a', 'b', 'c'}\n"
-
-    TEST_EXP_TRUE( VARS, ".D in .AD" );
-    TEST_EXP_TRUE( VARS, ".D not in .ABC" );
-    TEST_EXP_TRUE( VARS, ".AD in .ABC" );
-    TEST_EXP_FALSE( VARS, ".D in .ABC" );
-
-#undef VARS
-
-    // Non-existent variable
-    TEST_EXP_FAIL( ".String = ''", ".String in .A", "Unknown variable '.A'" );
-
-    // Incorrect RHS operand type
-    TEST_EXP_FAIL( ".String = ''\n .A = true", ".String in .A", "Property '.A' must be of type <ArrayOfStrings> (found <Bool>)" );
-    TEST_EXP_FAIL( ".String = ''\n .A = 1234", ".String in .A", "Property '.A' must be of type <ArrayOfStrings> (found <Int>)" );
-    TEST_EXP_FAIL( ".String = ''\n .A = 'xy'", ".String in .A", "Property '.A' must be of type <ArrayOfStrings> (found <String>)" );
-    TEST_EXP_FAIL( ".String = ''\n .S = []\n .A = {.S}", ".String in .A", "Property '.A' must be of type <ArrayOfStrings> (found <ArrayOfStructs>)" );
-    // TODO: Currently produces error #1071 "Unexpected token" instead of #1050
-    TEST_EXP_FAIL( ".String = ''", ".String in true", "Error #1071" );
-    TEST_EXP_FAIL( ".String = ''", ".String in 1234", "Error #1071" );
-    TEST_EXP_FAIL( ".String = ''", ".String in 'xy'", "Property '<literal>' must be of type <ArrayOfStrings> (found <String>)" );
-}
-
-void TestIf::IfFunctionBracket() const
-{
-    TEST_EXP_TRUE( "", "(true)" );
-    TEST_EXP_TRUE( "", "(!false)" );
-    TEST_EXP_FALSE( "", "(false)" );
-
-    TEST_EXP_TRUE( "", "((((!false))))" );
-    TEST_EXP_FAIL( "", "((((!false)))", "Matching closing token ) not found." );
-
-    TEST_EXP_TRUE( "", "(!!true)" );
-    TEST_EXP_TRUE( "", "(!(!true))" );
-    TEST_EXP_TRUE( "", "(true == true)" );
-
-    TEST_EXP_TRUE( "", "(1 == 1)" );
-    TEST_EXP_TRUE( "", "!(1 != 1)" );
-
-    TEST_EXP_TRUE( "", "('String' == 'String')" );
-    TEST_EXP_TRUE( "", "!('String' != 'String')" );
-
-    TEST_EXP_TRUE( "", "('String' == 'String') && (1 == 1)" );
-    TEST_EXP_TRUE( "", "('String' == 'Hello') || (1 == 1)" );
-    TEST_EXP_TRUE( "", "true && (false || true) || ((1 == 2) && ('abc' != 'def'))" );
-
-#define VARS \
-    ".D = 'd'\n" \
-    ".A = {'a'}\n" \
-    ".AD = {'a', 'd'}\n" \
-    ".ABC = {'a', 'b', 'c'}\n"
-
-    TEST_EXP_TRUE( VARS, "(.A in .AD)" );
-    TEST_EXP_TRUE( VARS, "(.D in .AD)" );
-    TEST_EXP_FALSE( VARS, "(.D in .ABC)" );
-    TEST_EXP_TRUE( VARS, "(.D not in .ABC)" );
-    TEST_EXP_TRUE( VARS, "(.D == 'd') && (.AD in .ABC)" );
-
-#undef VARS
-}
-
-#undef TEST_EXP_TRUE
-#undef TEST_EXP_FALSE
-#undef TEST_EXP_FAIL
 
 // UsageError_ExtraTokensAfterExpression
 //------------------------------------------------------------------------------
 void TestIf::UsageError_ExtraTokensAfterExpression() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestIf/usageerror_extratokensafterexpression.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Unexpected token 'and'" ) );
+    TEST_ASSERT( GetRecordedOutput().Find( "Matching closing token ) not found" ) );
 }
 
 // UsageError_UnsupportedTypeForIn
@@ -410,7 +161,7 @@ void TestIf::UsageError_ExtraTokensAfterExpression() const
 void TestIf::UsageError_UnsupportedTypeForIn() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestIf/usageerror_unsupportedtypeforin.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Unexpected operator 'in'" ) );
+    TEST_ASSERT( GetRecordedOutput().Find( "Property '.Int' must be of type <ArrayOfStrings> or <String> (found <Int>" ) );
 }
 
 // UsageError_UnsupportedOperation
@@ -418,7 +169,32 @@ void TestIf::UsageError_UnsupportedTypeForIn() const
 void TestIf::UsageError_UnsupportedOperation() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestIf/usageerror_unsupportedoperation.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Unexpected operator '>='" ) );
+    TEST_ASSERT( GetRecordedOutput().Find( "Operation not supported: 'Bool' >= 'Bool'" ) );
+}
+
+// Parse
+//------------------------------------------------------------------------------
+void TestIf::Parse( const char * fileName, bool expectFailure ) const
+{
+    FileStream f;
+    TEST_ASSERT( f.Open( fileName, FileStream::READ_ONLY ) );
+    uint32_t fileSize = (uint32_t)f.GetFileSize();
+    AutoPtr< char > mem( (char *)ALLOC( fileSize + 1 ) );
+    mem.Get()[ fileSize ] = '\000'; // parser requires sentinel
+    TEST_ASSERT( f.Read( mem.Get(), fileSize ) == fileSize );
+
+    FBuild fBuild;
+    NodeGraph ng;
+    BFFParser p( ng );
+    bool parseResult = p.Parse( mem.Get(), fileSize, fileName, 0, 0 );
+    if ( expectFailure )
+    {
+        TEST_ASSERT( parseResult == false ); // Make sure it failed as expected
+    }
+    else
+    {
+        TEST_ASSERT( parseResult == true );
+    }
 }
 
 //------------------------------------------------------------------------------

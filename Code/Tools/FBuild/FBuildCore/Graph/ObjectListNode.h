@@ -5,19 +5,16 @@
 // Includes
 //------------------------------------------------------------------------------
 #include "Node.h"
-
-// FBuild
-#include <Tools/FBuild/FBuildCore/Graph/ObjectNode.h>
-
-// Core
 #include "Core/Containers/Array.h"
 
 // Forward Declarations
 //------------------------------------------------------------------------------
 class Args;
+class BFFIterator;
 class CompilerNode;
 class Function;
 class NodeGraph;
+class ObjectNode;
 
 // ObjectListNode
 //------------------------------------------------------------------------------
@@ -26,7 +23,7 @@ class ObjectListNode : public Node
     REFLECT_NODE_DECLARE( ObjectListNode )
 public:
     ObjectListNode();
-    virtual bool Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function ) override;
+    virtual bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function ) override;
     virtual ~ObjectListNode() override;
 
     static inline Node::Type GetTypeS() { return Node::OBJECT_LIST_NODE; }
@@ -38,9 +35,10 @@ public:
     void GetInputFiles( Args & fullArgs, const AString & pre, const AString & post, bool objectsInsteadOfLibs ) const;
     void GetInputFiles( Array< AString > & files ) const;
 
-    inline const AString & GetCompilerOptions() const { return m_CompilerOptions; }
-    inline const AString & GetCompiler() const { return m_Compiler; }
+    CompilerNode * GetCompiler() const;
+    CompilerNode * GetPreprocessor() const;
 
+    inline const AString & GetCompilerOptions() const { return m_CompilerOptions; }
     void GetObjectFileName( const AString & fileName, const AString & baseDir, AString & objFile );
 
     void EnumerateInputFiles( void (*callback)( const AString & inputFile, const AString & baseDir, void * userData ), void * userData ) const;
@@ -53,16 +51,12 @@ protected:
     virtual BuildResult DoBuild( Job * job ) override;
 
     // internal helpers
-    bool CreateDynamicObjectNode( NodeGraph & nodeGraph,
-                                  const AString & inputFileName,
-                                  const AString & baseDir,
-                                  bool isUnityNode = false,
-                                  bool isIsolatedFromUnityNode = false );
+    bool CreateDynamicObjectNode( NodeGraph & nodeGraph, Node * inputFile, const AString & baseDir, bool isUnityNode = false, bool isIsolatedFromUnityNode = false );
     ObjectNode * CreateObjectNode( NodeGraph & nodeGraph,
-                                   const BFFToken * iter,
+                                   const BFFIterator & iter,
                                    const Function * function,
-                                   const ObjectNode::CompilerFlags flags,
-                                   const ObjectNode::CompilerFlags preprocessorFlags,
+                                   const uint32_t flags,
+                                   const uint32_t preprocessorFlags,
                                    const AString & compilerOptions,
                                    const AString & compilerOptionsDeoptimized,
                                    const AString & preprocessor,
@@ -70,6 +64,7 @@ protected:
                                    const AString & objectName,
                                    const AString & objectInput,
                                    const AString & pchObjectName );
+    ObjectNode * GetPrecompiledHeader() const;
 
     // Exposed Properties
     AString             m_Compiler;
@@ -86,7 +81,6 @@ protected:
     Array< AString >    m_CompilerInputFiles;
     Array< AString >    m_CompilerInputUnity;
     AString             m_CompilerInputFilesRoot;
-    Array< AString >    m_CompilerInputObjectLists;
     Array< AString >    m_CompilerForceUsing;
     bool                m_CompilerInputAllowNoFiles         = false;
     bool                m_CompilerInputPathRecurse          = true;
@@ -103,17 +97,13 @@ protected:
     Array< AString >    m_PreBuildDependencyNames;
 
     // Internal State
-    AString             m_PrecompiledHeaderName;
-    #if defined( __WINDOWS__ )
-        AString             m_PrecompiledHeaderCPPFile;
-    #endif
+    bool                m_UsingPrecompiledHeader            = false;
     AString             m_ExtraPDBPath;
     AString             m_ExtraASMPath;
-    AString             m_ExtraSourceDependenciesPath;
     uint32_t            m_ObjectListInputStartIndex         = 0;
     uint32_t            m_ObjectListInputEndIndex           = 0;
-    ObjectNode::CompilerFlags   m_CompilerFlags;
-    ObjectNode::CompilerFlags   m_PreprocessorFlags;
+    uint32_t            m_NumCompilerInputUnity             = 0;
+    uint32_t            m_NumCompilerInputFiles             = 0;
 };
 
 //------------------------------------------------------------------------------

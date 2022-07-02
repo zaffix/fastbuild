@@ -1,5 +1,6 @@
 //
-// LightCache handles files included via defines
+// LightCache does not support includes which use macros as follows
+// but should detect this case and safely detect this case
 //
 //------------------------------------------------------------------------------
 #define ENABLE_LIGHT_CACHE // Shared compiler config will check this

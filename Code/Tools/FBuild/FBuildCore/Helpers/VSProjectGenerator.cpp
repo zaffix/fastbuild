@@ -65,7 +65,7 @@ void VSProjectGenerator::AddFile( const AString & file )
     // ensure slash consistency which we rely on later
     AStackString<> fileCopy( file );
     fileCopy.Replace( FORWARD_SLASH, BACK_SLASH );
-    m_Files.EmplaceBack();
+    m_Files.Append( VSProjectFilePair() );
     m_Files.Top().m_AbsolutePath = fileCopy;
 }
 
@@ -213,20 +213,14 @@ const AString & VSProjectGenerator::GenerateVCXProj( const AString & projectFile
     for ( const VSProjectConfig & config : configs )
     {
         const bool needSection = ( config.m_Keyword.IsEmpty() == false ) ||
-                                 ( config.m_RootNamespace.IsEmpty() == false ) ||
                                  ( config.m_ApplicationType.IsEmpty() == false ) ||
-                                 ( config.m_ApplicationTypeRevision.IsEmpty() == false ) ||
-                                 ( config.m_TargetLinuxPlatform.IsEmpty() == false ) ||
-                                 ( config.m_LinuxProjectType.IsEmpty() == false );
+                                 ( config.m_ApplicationTypeRevision.IsEmpty() == false );
         if ( needSection )
         {
             WriteF( "  <PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='%s|%s'\" Label=\"Globals\">\n", config.m_Config.Get(), config.m_Platform.Get() );
             WritePGItem( "Keyword", config.m_Keyword );
-            WritePGItem( "RootNamespace", config.m_RootNamespace );
             WritePGItem( "ApplicationType", config.m_ApplicationType );
             WritePGItem( "ApplicationTypeRevision", config.m_ApplicationTypeRevision );
-            WritePGItem( "TargetLinuxPlatform", config.m_TargetLinuxPlatform );
-            WritePGItem( "LinuxProjectType", config.m_LinuxProjectType );
             Write( "  </PropertyGroup>\n" );
         }
     }
@@ -293,20 +287,11 @@ const AString & VSProjectGenerator::GenerateVCXProj( const AString & projectFile
         {
             WriteF( "  <PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='%s|%s'\">\n", cIt->m_Config.Get(), cIt->m_Platform.Get() );
 
-            if ( cIt->m_Keyword == "Linux" )
-            {
-                WritePGItem( "BuildCommandLine",                cIt->m_ProjectBuildCommand );
-                WritePGItem( "ReBuildCommandLine",              cIt->m_ProjectRebuildCommand );
-                WritePGItem( "CleanCommandLine",                cIt->m_ProjectCleanCommand );
-            }
-            else
-            {
-                WritePGItem( "NMakeBuildCommandLine",           cIt->m_ProjectBuildCommand );
-                WritePGItem( "NMakeReBuildCommandLine",         cIt->m_ProjectRebuildCommand );
-                WritePGItem( "NMakeCleanCommandLine",           cIt->m_ProjectCleanCommand );
-            }
-
+            WritePGItem( "NMakeBuildCommandLine",           cIt->m_ProjectBuildCommand );
+            WritePGItem( "NMakeReBuildCommandLine",         cIt->m_ProjectRebuildCommand );
+            WritePGItem( "NMakeCleanCommandLine",           cIt->m_ProjectCleanCommand );
             WritePGItem( "NMakeOutput",                     cIt->m_Output );
+
             const ObjectListNode * oln = nullptr;
             if ( cIt->m_PreprocessorDefinitions.IsEmpty() || cIt->m_IncludeSearchPath.IsEmpty() )
             {
@@ -328,46 +313,29 @@ const AString & VSProjectGenerator::GenerateVCXProj( const AString & projectFile
                     WritePGItem( "NMakePreprocessorDefinitions", definesStr );
                 }
             }
-            StackArray< AString > includePaths;
-            StackArray< AString > forceIncludes;
-            if ( oln )
-            {
-                ProjectGeneratorBase::ExtractIncludePaths( oln->GetCompilerOptions(), includePaths, forceIncludes, false );
-            }
             if ( cIt->m_IncludeSearchPath.IsEmpty() == false )
             {
                 WritePGItem( "NMakeIncludeSearchPath",          cIt->m_IncludeSearchPath );
             }
-            else if ( oln )
+            else
             {
-                for ( AString & include : includePaths )
+                if ( oln )
                 {
-                    ProjectGeneratorBase::GetRelativePath( projectBasePath, include, include );
-                    #if !defined( __WINDOWS__ )
-                        include.Replace( '/', '\\' ); // Convert to Windows-style slashes
-                    #endif
+                    Array< AString > includePaths;
+                    ProjectGeneratorBase::ExtractIncludePaths( oln->GetCompilerOptions(), includePaths, false );
+                    for ( AString & include : includePaths )
+                    {
+                        ProjectGeneratorBase::GetRelativePath( projectBasePath, include, include );
+                        #if !defined( __WINDOWS__ )
+                            include.Replace( '/', '\\' ); // Convert to Windows-style slashes
+                        #endif
+                    }
+                    AStackString<> includePathsStr;
+                    ProjectGeneratorBase::ConcatIntellisenseOptions( includePaths, includePathsStr, nullptr, ";" );
+                    WritePGItem( "NMakeIncludeSearchPath", includePathsStr );
                 }
-                AStackString<> includePathsStr;
-                ProjectGeneratorBase::ConcatIntellisenseOptions( includePaths, includePathsStr, nullptr, ";" );
-                WritePGItem( "NMakeIncludeSearchPath", includePathsStr );
             }
-            if ( cIt->m_ForcedIncludes.IsEmpty() == false )
-            {
-                WritePGItem( "NMakeForcedIncludes",             cIt->m_ForcedIncludes );
-            }
-            else if ( oln )
-            {
-                for ( AString & forceInclude : forceIncludes )
-                {
-                    ProjectGeneratorBase::GetRelativePath( projectBasePath, forceInclude, forceInclude );
-                    #if !defined( __WINDOWS__ )
-                        forceInclude.Replace( '/', '\\' ); // Convert to Windows-style slashes
-                    #endif
-                }
-                AStackString<> forceIncludePathsStr;
-                ProjectGeneratorBase::ConcatIntellisenseOptions( forceIncludes, forceIncludePathsStr, nullptr, ";" );
-                WritePGItem( "NMakeForcedIncludes", forceIncludePathsStr );
-            }
+            WritePGItem( "NMakeForcedIncludes",             cIt->m_ForcedIncludes );
             WritePGItem( "NMakeAssemblySearchPath",         cIt->m_AssemblySearchPath );
             WritePGItem( "NMakeForcedUsingAssemblies",      cIt->m_ForcedUsingAssemblies );
             if ( cIt->m_AdditionalOptions.IsEmpty() == false )
@@ -395,9 +363,6 @@ const AString & VSProjectGenerator::GenerateVCXProj( const AString & projectFile
             WritePGItem( "AdditionalSymbolSearchPaths",     cIt->m_AdditionalSymbolSearchPaths );
             WritePGItem( "LayoutDir",                       cIt->m_LayoutDir );
             WritePGItem( "LayoutExtensionFilter",           cIt->m_LayoutExtensionFilter );
-            WritePGItem( "RemoteDebuggerCommand",           cIt->m_RemoteDebuggerCommand );
-            WritePGItem( "RemoteDebuggerCommandArguments",  cIt->m_RemoteDebuggerCommandArguments );
-            WritePGItem( "RemoteDebuggerWorkingDirectory",  cIt->m_RemoteDebuggerWorkingDirectory );
             Write( "  </PropertyGroup>\n" );
         }
     }

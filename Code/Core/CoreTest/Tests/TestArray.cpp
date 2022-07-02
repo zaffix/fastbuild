@@ -50,7 +50,6 @@ private:
     void PopFront() const;
     void Erase() const;
     void EraseIndex() const;
-    void EmplaceBack() const;
 
     void AssignmentOperator_OtherArray() const;
 
@@ -118,7 +117,6 @@ REGISTER_TESTS_BEGIN( TestArray )
     REGISTER_TEST( PopFront )
     REGISTER_TEST( Erase )
     REGISTER_TEST( EraseIndex )
-    REGISTER_TEST( EmplaceBack )
 
     REGISTER_TEST( AssignmentOperator_OtherArray )
 
@@ -1110,7 +1108,7 @@ void TestArray::Pop() const
         TEST_ASSERT( array[ 1 ] == 2 );
     }
 
-    // Complex Type
+    // Compelex Type
     {
         Array<AString> array;
         array.Append( AString( "string1" ) );
@@ -1166,7 +1164,7 @@ void TestArray::PopFront() const
         TEST_ASSERT( array[ 1 ] == 3 );
     }
 
-    // Complex Type
+    // Compelex Type
     {
         Array<AString> array;
         array.Append( AString( "string1" ) );
@@ -1222,7 +1220,7 @@ void TestArray::Erase() const
         TEST_ASSERT( array[ 1 ] == 3 );
     }
 
-    // Complex Type
+    // Compelex Type
     {
         Array<AString> array;
         array.Append( AString( "string1" ) );
@@ -1278,7 +1276,7 @@ void TestArray::EraseIndex() const
         TEST_ASSERT( array[ 1 ] == 3 );
     }
 
-    // Complex Type
+    // Compelex Type
     {
         Array<AString> array;
         array.Append( AString( "string1" ) );
@@ -1301,89 +1299,6 @@ void TestArray::EraseIndex() const
         TEST_ASSERT( array.GetCapacity() >= 3 ); // Capacity unchanged
         TEST_ASSERT( array[ 0 ] == "string1" );
         TEST_ASSERT( array[ 1 ] == "string3" );
-    }
-}
-
-// EmplaceBack
-//------------------------------------------------------------------------------
-void TestArray::EmplaceBack() const
-{
-    // POD
-    {
-        // Emplace one item
-        Array<int32_t> array;
-        TEST_ASSERT( array.EmplaceBack( 1 ) == 1 );
-        CheckConsistency( array );
-        TEST_ASSERT( array.IsEmpty() == false );
-        TEST_ASSERT( array.GetSize() == 1 );
-        TEST_ASSERT( array.GetCapacity() >= 1 );
-        TEST_ASSERT( array[ 0 ] == 1 );
-    }
-    {
-        // Emplace several items
-        Array<int32_t> array;
-        TEST_ASSERT( array.EmplaceBack( 1 ) == 1 );
-        TEST_ASSERT( array.EmplaceBack( 2 ) == 2 );
-        TEST_ASSERT( array.EmplaceBack( 3 ) == 3 );
-        CheckConsistency( array );
-        TEST_ASSERT( array.IsEmpty() == false );
-        TEST_ASSERT( array.GetSize() == 3 );
-        TEST_ASSERT( array.GetCapacity() >= 3 );
-        TEST_ASSERT( array[ 0 ] == 1 );
-        TEST_ASSERT( array[ 2 ] == 3 );
-    }
-
-    // Complex Type
-    {
-        // Emplace one item
-        Array<AString> array( 1 );
-
-        TEST_MEMORY_SNAPSHOT( s1 ); // Take note of memory state before
-
-        TEST_ASSERT( array.EmplaceBack( "string1" ) == "string1" );
-
-        TEST_EXPECT_ALLOCATION_EVENTS( s1, 1 ) // Check expected amount of allocs occurred
-
-        CheckConsistency( array );
-        TEST_ASSERT( array.IsEmpty() == false );
-        TEST_ASSERT( array.GetSize() == 1 );
-        TEST_ASSERT( array.GetCapacity() >= 1 );
-        TEST_ASSERT( array[ 0 ] == "string1" );
-    }
-    {
-        // Emplace one item (Move)
-        Array<AString> array( 1 );
-
-        TEST_MEMORY_SNAPSHOT( s1 ); // Take note of memory state before
-
-        TEST_ASSERT( array.EmplaceBack( Move( AString( "string1" ) ) ) == "string1" );
-
-        TEST_EXPECT_ALLOCATION_EVENTS( s1, 1 ) // Check expected amount of allocs occurred
-
-        CheckConsistency( array );
-        TEST_ASSERT( array.IsEmpty() == false );
-        TEST_ASSERT( array.GetSize() == 1 );
-        TEST_ASSERT( array.GetCapacity() >= 1 );
-        TEST_ASSERT( array[ 0 ] == "string1" );
-    }
-    {
-        // Emplace several items
-        Array<AString> array( 3 );
-
-        TEST_MEMORY_SNAPSHOT( s1 ); // Take note of memory state before
-
-        TEST_ASSERT( array.EmplaceBack( "string1" ) == "string1" );
-        TEST_ASSERT( array.EmplaceBack( "string2" ) == "string2" );
-        TEST_ASSERT( array.EmplaceBack( "string3" ) == "string3" );
-
-        TEST_EXPECT_ALLOCATION_EVENTS( s1, 3 ) // Check expected amount of allocs occurred
-
-        CheckConsistency( array );
-        TEST_ASSERT( array.IsEmpty() == false );
-        TEST_ASSERT( array.GetSize() == 3 );
-        TEST_ASSERT( array.GetCapacity() >= 3 ); // Capacity unchanged
-        TEST_ASSERT( array[ 0 ] == "string1" );
-        TEST_ASSERT( array[ 2 ] == "string3" );
     }
 }
 

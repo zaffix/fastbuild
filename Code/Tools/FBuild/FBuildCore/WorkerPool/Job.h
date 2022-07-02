@@ -10,7 +10,6 @@
 
 // Forward Declarations
 //------------------------------------------------------------------------------
-class BuildProfilerScope;
 class IOStream;
 class Node;
 class ToolManifest;
@@ -35,7 +34,7 @@ public:
     inline const AString & GetCacheName() const { return m_CacheName; }
 
     inline const volatile bool * GetAbortFlagPointer() const { return &m_Abort; }
-    void CancelDueToRemoteRaceWin();
+    void Cancel();
 
     // associate some data with this object, and destroy it when freed
     void    OwnData( void * data, size_t size, bool compressed = false );
@@ -68,17 +67,9 @@ public:
     void Deserialize( IOStream & stream );
 
     void                GetMessagesForLog( AString & buffer ) const;
-    static void         GetMessagesForLog( const Array< AString > & messages, AString & buffer );
     void                GetMessagesForMonitorLog( AString & buffer ) const;
-    static void         GetMessagesForMonitorLog( const Array< AString > & messages, AString & outBuffer );
 
-    void                SetRemoteThreadIndex( uint16_t threadIndex )    { m_RemoteThreadIndex = threadIndex; }
-    uint16_t            GetRemoteThreadIndex() const                    { return m_RemoteThreadIndex; }
-
-    void                SetResultCompressionLevel( int16_t compressionLevel )   { m_ResultCompressionLevel = compressionLevel; }
-    int16_t             GetResultCompressionLevel() const                       { return m_ResultCompressionLevel; }
-
-    enum DistributionState : uint8_t
+    enum DistributionState
     {
         DIST_NONE                           = 0, // All non-distributable jobs
         DIST_AVAILABLE                      = 1, // A distributable job, not in progress
@@ -100,9 +91,6 @@ public:
     // Access total memory usage by job data
     static uint64_t             GetTotalLocalDataMemoryUsage();
 
-    void                    SetBuildProfilerScope( BuildProfilerScope * scope );
-    BuildProfilerScope *    GetBuildProfilerScope() const { return m_BuildProfilerScope; }
-
 private:
     uint32_t            m_JobId             = 0;
     uint32_t            m_DataSize          = 0;
@@ -114,13 +102,11 @@ private:
     bool                m_IsLocal           = true;
     uint8_t             m_SystemErrorCount  = 0; // On client, the total error count, on the worker a flag for the current attempt
     DistributionState   m_DistributionState = DIST_NONE;
-    uint16_t            m_RemoteThreadIndex = 0; // On server, the thread index used to build
     AString             m_RemoteName;
     AString             m_RemoteSourceRoot;
     AString             m_CacheName;
-    BuildProfilerScope * m_BuildProfilerScope = nullptr;    // Additional context when profiling a build
+
     ToolManifest *      m_ToolManifest      = nullptr;
-    int16_t             m_ResultCompressionLevel = 0; // Compression level of returned results
 
     Array< AString >    m_Messages;
 

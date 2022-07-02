@@ -16,7 +16,7 @@
 #include "Tools/FBuild/FBuildCore/Graph/TestNode.h"
 
 // Core
-#include "Core/Containers/UniquePtr.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/Env/ErrorFormat.h"
 #include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/FileStream.h"
@@ -219,7 +219,7 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
         else
         {
             // check content
-            UniquePtr< char > mem( ( char *)ALLOC( oldFileSize ) );
+            AutoPtr< char > mem( ( char *)ALLOC( oldFileSize ) );
             if ( old.Read( mem.Get(), oldFileSize ) != oldFileSize )
             {
                 FLOG_ERROR( "%s - Failed to read '%s'", generatorId, fileName.Get() );
@@ -263,10 +263,7 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
 //------------------------------------------------------------------------------
 /*static*/ bool ProjectGeneratorBase::WriteToDisk( const char * generatorId, const AString & content, const AString & fileName )
 {
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        FLOG_OUTPUT( "%s: %s\n", generatorId, fileName.Get() );
-    }
+    FLOG_BUILD( "%s: %s\n", generatorId, fileName.Get() );
 
     // ensure path exists (normally handled by framework, but Projects
     // are not necessarily a single file)
@@ -297,18 +294,16 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
 //------------------------------------------------------------------------------
 /*static*/ void ProjectGeneratorBase::GetDefaultAllowedFileExtensions( Array< AString > & extensions )
 {
-    static const char * const defaultExtensions[] =
-    {
-        "*.cpp", "*.hpp", "*.cxx", "*.hxx", "*.c",   "*.h",  "*.cc",   "*.hh",
-        "*.cp",  "*.hp",  "*.cs",  "*.inl", "*.bff", "*.rc", "*.resx", "*.m",  "*.mm",
-        "*.cu",
-        "*.asm", "*.s",
-        "*.natvis", "*.editorconfig"
-    };
+    static const char * defaultExtensions[] =   {
+                                        "*.cpp", "*.hpp", "*.cxx", "*.hxx", "*.c",   "*.h",  "*.cc",   "*.hh",
+                                        "*.cp",  "*.hp",  "*.cs",  "*.inl", "*.bff", "*.rc", "*.resx", "*.m",  "*.mm",
+                                        "*.cu",
+                                        "*.asm", "*.s",
+                                        "*.natvis" };
     extensions.SetCapacity( sizeof( defaultExtensions ) / sizeof( char * ) );
-    for ( const char * const ext : defaultExtensions )
+    for ( auto & ext : defaultExtensions )
     {
-        extensions.EmplaceBack( ext );
+        extensions.Append( AStackString<>( ext ) );
     }
 }
 
@@ -320,7 +315,7 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
     // To normalize run-time behaviour, we convert everything to wildcard format
 
     // convert any that are not wildcards patterns
-    for ( AString & ext : extensions )
+    for ( auto & ext : extensions )
     {
         if ( ext.Find('*') || ext.Find('?') )
         {
@@ -329,7 +324,7 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
 
         // convert ".ext" to "*.ext"
         AStackString<> tmp;
-        tmp.Format( "*%s", ext.Get() );
+        tmp.Format("*%s", ext.Get());
         ext = tmp;
     }
 }
@@ -412,38 +407,18 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
 //------------------------------------------------------------------------------
 /*static*/ void ProjectGeneratorBase::ExtractIncludePaths( const AString & compilerArgs,
                                                            Array< AString > & outIncludes,
-                                                           Array< AString > & outForceIncludes,
                                                            bool escapeQuotes )
 {
-    // Different options add paths to the different groups which are then searched in the order of their priority.
-    // So we need to do multiple passes over arguments to get a list of paths in the correct order.
-    StackArray< StackArray< AString, 2 >, 6 > prefixes;
-    prefixes.SetSize( 6 );
-    prefixes[ 0 ].EmplaceBack( "/I" );
-    prefixes[ 0 ].EmplaceBack( "-I" );
-    prefixes[ 1 ].EmplaceBack( "-isystem-after" ); // NOTE: before -isystem so it's checked first
-    prefixes[ 1 ].EmplaceBack( "-isystem" );
-    prefixes[ 2 ].EmplaceBack( "/imsvc" );
-    prefixes[ 2 ].EmplaceBack( "-imsvc" );
-    prefixes[ 3 ].EmplaceBack( "-idirafter" );
-    prefixes[ 4 ].EmplaceBack( "-iquote" );
-    prefixes[ 5 ].EmplaceBack( "/external:I" );
-    prefixes[ 5 ].EmplaceBack( "-external:I" );
+    StackArray< AString, 5 > prefixes;
+    prefixes.Append( Move( AString( "/I" ) ) );
+    prefixes.Append( Move( AString( "-I" ) ) );
+    prefixes.Append( Move( AString( "-isystem-after" ) ) ); // NOTE: before -isystem so it's checked first
+    prefixes.Append( Move( AString( "-isystem" ) ) );
+    prefixes.Append( Move( AString( "-iquote" ) ) );
 
-    for ( const StackArray<AString, 2> & group : prefixes )
-    {
-        const bool keepFullOption = false;
-        ExtractIntellisenseOptions( compilerArgs, group, outIncludes, escapeQuotes, keepFullOption );
-    }
-
-    // Check for forced includes
-    {
-        StackArray< AString, 2 > forceIncludeOptions;
-        forceIncludeOptions.EmplaceBack( "/FI" );
-        forceIncludeOptions.EmplaceBack( "-FI" );
-        const bool keepFullOption = false;
-        ExtractIntellisenseOptions( compilerArgs, forceIncludeOptions, outForceIncludes, escapeQuotes, keepFullOption );
-    }
+    // Extract various kinds of includes
+    const bool keepFullOption = false;
+    ExtractIntellisenseOptions( compilerArgs, prefixes, outIncludes, escapeQuotes, keepFullOption );
 }
 
 // ExtractDefines
@@ -453,8 +428,8 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
                                                       bool escapeQuotes )
 {
     StackArray< AString, 2 > prefixes;
-    prefixes.EmplaceBack( "/D" );
-    prefixes.EmplaceBack( "-D" );
+    prefixes.Append( Move( AString( "/D" ) ) );
+    prefixes.Append( Move( AString( "-D" ) ) );
 
     // Extract various kinds of includes
     const bool keepFullOption = false;
@@ -466,11 +441,9 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
 /*static*/ void ProjectGeneratorBase::ExtractAdditionalOptions( const AString & compilerArgs,
                                                                 Array< AString > & outOptions )
 {
-    StackArray< AString, 4 > prefixes;
-    prefixes.EmplaceBack( "-std" );
-    prefixes.EmplaceBack( "/std" );
-    prefixes.EmplaceBack( "-wd" );
-    prefixes.EmplaceBack( "/wd" );
+    StackArray< AString, 2 > prefixes;
+    prefixes.Append( Move( AString( "-std" ) ) );
+    prefixes.Append( Move( AString( "/std" ) ) );
 
     // Extract the options
     const bool escapeQuotes = false;
@@ -535,7 +508,6 @@ void ProjectGeneratorBase::AddConfig( const ProjectGeneratorBaseConfig & config 
                         // use everything after token
                         optionBody.Assign( token.Get() + prefix.GetLength() );
                     }
-                    break;
                 }
             }
         }

@@ -29,7 +29,7 @@ class Server : public TCPConnectionPool
 {
 public:
     Server( uint32_t numThreadsInJobQueue = 0 );
-    virtual ~Server() override;
+    ~Server();
 
     static void GetHostForJob( const Job * job, AString & hostName );
 
@@ -37,9 +37,9 @@ public:
 
 private:
     // TCPConnection interface
-    virtual void OnConnected( const ConnectionInfo * connection ) override;
-    virtual void OnDisconnected( const ConnectionInfo * connection ) override;
-    virtual void OnReceive( const ConnectionInfo * connection, void * data, uint32_t size, bool & keepMemory ) override;
+    virtual void OnConnected( const ConnectionInfo * connection );
+    virtual void OnDisconnected( const ConnectionInfo * connection );
+    virtual void OnReceive( const ConnectionInfo * connection, void * data, uint32_t size, bool & keepMemory );
 
     // helpers to handle messages
     void Process( const ConnectionInfo * connection, const Protocol::MsgConnection * msg );
@@ -54,7 +54,6 @@ private:
 
     void            FindNeedyClients();
     void            FinalizeCompletedJobs();
-    void            TouchToolchains();
     void            CheckWaitingJobs( const ToolManifest * manifest );
 
     void            RequestMissingFiles( const ConnectionInfo * connection, ToolManifest * manifest ) const;
@@ -89,10 +88,6 @@ private:
 
     mutable Mutex           m_ToolManifestsMutex;
     Array< ToolManifest * > m_Tools;
-    
-    #if defined( __OSX__ ) || defined( __LINUX__ )
-        Timer                   m_TouchToolchainTimer;
-    #endif
 };
 
 //------------------------------------------------------------------------------

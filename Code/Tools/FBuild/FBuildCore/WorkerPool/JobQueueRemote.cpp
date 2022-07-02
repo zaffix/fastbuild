@@ -11,11 +11,11 @@
 #include "Tools/FBuild/FBuildCore/FLog.h"
 #include "Tools/FBuild/FBuildCore/Graph/Node.h"
 #include "Tools/FBuild/FBuildCore/Graph/ObjectNode.h"
-#include "Tools/FBuild/FBuildCore/Helpers/BuildProfiler.h"
 #include "Tools/FBuild/FBuildCore/Helpers/MultiBuffer.h"
 
 // Core
 #include "Core/Env/ErrorFormat.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/FileStream.h"
 #include "Core/FileIO/PathUtils.h"
@@ -37,7 +37,7 @@ JobQueueRemote::JobQueueRemote( uint32_t numWorkerThreads ) :
     {
         // identify each worker with an id starting from 1
         // (the "main" thread is considered 0)
-        const uint16_t threadIndex = static_cast<uint16_t>( i + 1001 );
+        uint32_t threadIndex = ( i + 1001 );
         WorkerThread * wt = FNEW( WorkerThreadRemote( threadIndex ) );
         wt->Init();
         m_Workers.Append( wt );
@@ -68,13 +68,8 @@ void JobQueueRemote::SignalStopWorkers()
     for ( size_t i=0; i<numWorkerThreads; ++i )
     {
         m_Workers[ i ]->Stop();
+        WakeWorkers();
     }
-
-    // Signal threads (both active and idle)
-    // (We don't know which threads are in any given state, so we signal
-    // the worst case for both states)
-    m_WorkerThreadSemaphore.Signal( static_cast<uint32_t>(numWorkerThreads) );
-    m_WorkerThreadSleepSemaphore.Signal( static_cast<uint32_t>(numWorkerThreads) );
 }
 
 // HaveWorkersStopped
@@ -103,7 +98,7 @@ void JobQueueRemote::GetWorkerStatus( size_t index, AString & hostName, AString 
 //------------------------------------------------------------------------------
 void JobQueueRemote::MainThreadWait( uint32_t timeoutMS )
 {
-    PROFILE_SECTION( "MainThreadWait" );
+    PROFILE_SECTION( "MainThreadWait" )
     m_MainThreadSemaphore.Wait( timeoutMS );
 }
 
@@ -116,18 +111,17 @@ void JobQueueRemote::WakeMainThread()
 
 // WorkerThreadWait
 //------------------------------------------------------------------------------
-void JobQueueRemote::WorkerThreadWait()
+void JobQueueRemote::WorkerThreadWait( uint32_t timeoutMS )
 {
-    PROFILE_SECTION( "WorkerThreadWait" );
-    m_WorkerThreadSemaphore.Wait( 1000 );
+    PROFILE_SECTION( "WorkerThreadWait" )
+    m_WorkerThreadSemaphore.Wait( timeoutMS );
 }
 
-// WorkerThreadSleep
+// WakeWorkers
 //------------------------------------------------------------------------------
-void JobQueueRemote::WorkerThreadSleep()
+void JobQueueRemote::WakeWorkers()
 {
-    PROFILE_SECTION( "WorkerThreadSleep" );
-    m_WorkerThreadSleepSemaphore.Wait( 1000 );
+    m_WorkerThreadSemaphore.Signal();
 }
 
 // QueueJob (Main Thread)
@@ -139,8 +133,7 @@ void JobQueueRemote::QueueJob( Job * job )
         m_PendingJobs.Append( job );
     }
 
-    // Wake a single non-idle worker thread
-    m_WorkerThreadSemaphore.Signal( 1 );
+    WakeWorkers();
 }
 
 // GetCompletedJob
@@ -225,7 +218,7 @@ void JobQueueRemote::CancelJobsWithUserData( void * userData )
 //------------------------------------------------------------------------------
 Job * JobQueueRemote::GetJobToProcess()
 {
-    WorkerThreadWait();
+    WorkerThreadWait( 100 );
 
     MutexHolder m( m_PendingJobsMutex );
     if ( m_PendingJobs.IsEmpty() )
@@ -282,8 +275,6 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
 //------------------------------------------------------------------------------
 /*static*/ Node::BuildResult JobQueueRemote::DoBuild( Job * job, bool racingRemoteJob )
 {
-    BuildProfilerScope profileScope( *job, WorkerThread::GetThreadIndex(), job->GetNode()->GetTypeName() );
-
     Timer timer; // track how long the item takes
 
     ObjectNode * node = job->GetNode()->CastTo< ObjectNode >();
@@ -342,14 +333,6 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
 
     if ( result == Node::NODE_RESULT_FAILED )
     {
-        // Locally we don't record the build time for failures as we
-        // want to keep the last successful build time for job ordering.
-        // If building remotely, we want to return the time taken however.
-        if ( job->IsLocal() == false )
-        {
-            node->SetLastBuildTime( timeTakenMS );
-        }
-
         node->SetStatFlag( Node::STATS_FAILED );
     }
     else
@@ -357,7 +340,8 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
         // build completed ok
         ASSERT( result == Node::NODE_RESULT_OK );
 
-        // record new build time
+        // record new build time only if built (i.e. if failed, the time
+        // does not represent how long it takes to create this resource)
         node->SetLastBuildTime( timeTakenMS );
         node->SetStatFlag( Node::STATS_BUILT );
 
@@ -421,11 +405,11 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
     const bool includePDB = node->IsUsingPDB();
     const bool usingStaticAnalysis = node->IsUsingStaticAnalysisMSVC();
 
-    // Determine list of files to send
+    // Detemine list of files to send
 
     // 1. Object file
     //---------------
-    StackArray< AString > fileNames;
+    Array< AString > fileNames( 3, false );
     fileNames.Append( node->GetName() );
 
     // 2. PDB file (optional)
@@ -452,13 +436,6 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
     {
         job->Error( "Error reading file: '%s'", fileNames[ problemFileIndex ].Get() );
         FLOG_ERROR( "Error reading file: '%s'", fileNames[ problemFileIndex ].Get() );
-    }
-
-    // Compress result
-    const int32_t compressionLevel = job->GetResultCompressionLevel();
-    if ( compressionLevel != 0 )
-    {
-        mb.Compress( compressionLevel );
     }
 
     // transfer data to job

@@ -73,12 +73,4 @@ uint32_t DropDownOSX_GetSelectedItem( const OSDropDown * owner )
     return popUp.indexOfSelectedItem;
 }
 
-// DropDownOSX_SetEnabled
-//------------------------------------------------------------------------------
-void DropDownOSX_SetEnabled( const OSDropDown * owner, bool enabled )
-{
-    PopUpButton * popUp = (__bridge PopUpButton *)owner->GetHandle();
-    popUp.enabled = enabled ? YES : NO;
-}
-
 //------------------------------------------------------------------------------

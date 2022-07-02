@@ -23,15 +23,16 @@ BFFMacros::~BFFMacros() = default;
 
 // IsDefined
 //------------------------------------------------------------------------------
-bool BFFMacros::IsDefined( const AString & token ) const
+bool BFFMacros::IsDefined(const AString& token) const
 {
-    // user defined tokens
-    if ( m_Tokens.Find( token ) )
+    // user defined tokens :
+    AString *const defined = m_Tokens.Find( token );
+    if ( defined != nullptr )
     {
         return true;
     }
 
-    // fallback to predefined tokens
+    // fallbacking to predefined tokens :
     #if defined( __WINDOWS__ )
         if ( token == "__WINDOWS__" )
         {
@@ -50,29 +51,17 @@ bool BFFMacros::IsDefined( const AString & token ) const
             return true;
         }
     #endif
-    #if defined( __X64__ )
-        if ( token == "__X64__" )
-        {
-            return true;
-        }
-    #endif
-    #if defined( __ARM64__ )
-        if ( token == "__ARM64__" )
-        {
-            return true;
-        }
-    #endif
 
     return false;
 }
 
 // Define
 //------------------------------------------------------------------------------
-bool BFFMacros::Define( const AString & token )
+bool BFFMacros::Define( const AString& token )
 {
     if ( IsDefined( token ) )
     {
-        // trying to overwrite an existing token
+        // trying to overwrite an existing token :
         return false;
     }
     else
@@ -84,9 +73,9 @@ bool BFFMacros::Define( const AString & token )
 
 // Undefine
 //------------------------------------------------------------------------------
-bool BFFMacros::Undefine( const AString & token )
+bool BFFMacros::Undefine( const AString& token )
 {
-    AString * const defined = m_Tokens.Find( token );
+    AString *const defined = m_Tokens.Find( token );
     if ( defined == nullptr )
     {
         // trying to remove an unexisting or predefined token :

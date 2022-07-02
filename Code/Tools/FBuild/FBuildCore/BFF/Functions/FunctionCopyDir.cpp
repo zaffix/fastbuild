@@ -25,13 +25,6 @@ FunctionCopyDir::FunctionCopyDir()
     return true;
 }
 
-// NeedsHeader
-//------------------------------------------------------------------------------
-/*virtual*/ bool FunctionCopyDir::NeedsHeader() const
-{
-    return true;
-}
-
 // CreateNode
 //------------------------------------------------------------------------------
 /*virtual*/ Node * FunctionCopyDir::CreateNode() const

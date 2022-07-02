@@ -88,13 +88,8 @@ public:
 
     inline bool MemoryMustBeFreed() const { return ( ( m_ReservedAndFlags & MEM_MUST_BE_FREED_FLAG ) == MEM_MUST_BE_FREED_FLAG ); }
 
-    // Format
     AString & Format( MSVC_SAL_PRINTF const char * fmtString, ... ) FORMAT_STRING( 2, 3 );
     AString & VFormat( const char * fmtString, va_list arg );
-
-    // ScanF
-    NODISCARD int32_t           Scan( MSVC_SAL_SCANF const char * fmtString, ... ) SCAN_STRING( 2, 3 );
-    NODISCARD static int32_t    ScanS( const char * buffer, MSVC_SAL_SCANF const char * fmtString, ... ) SCAN_STRING( 2, 3 );
 
     void Tokenize( Array< AString > & tokens, char splitChar = ' ' ) const;
 
@@ -106,21 +101,19 @@ public:
 
     // Trimming
     void Trim( uint32_t startCharsToTrim, uint32_t endCharsToTrim );
-    void TrimStart( char charToTrimFromStart );
-    void TrimEnd( char charToTrimFromStart );
 
     // searching
     const char *    Find( char c, const char * startPos = nullptr, const char * endPos = nullptr ) const;
-    char *          Find( char c, const char * startPos = nullptr, const char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->Find( c, startPos, endPos ) ); }
+    char *          Find( char c, char * startPos = nullptr, char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->Find( c, startPos, endPos ) ); }
     const char *    Find( const char * subString, const char * startPos = nullptr, const char * endPos = nullptr ) const;
-    char *          Find( const char * subString, const char * startPos = nullptr, const char * endPos = nullptr ) { return const_cast<char *>( ((const AString *)this)->Find( subString, startPos, endPos ) ); }
+    char *          Find( const char * subString, char * startPos = nullptr, char * endPos = nullptr ) { return const_cast<char *>( ((const AString *)this)->Find( subString, startPos, endPos ) ); }
     const char *    Find( const AString & subString, const char * startPos = nullptr, const char * endPos = nullptr ) const;
     char *          Find( const AString & subString, const char * startPos = nullptr, const char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->Find( subString, startPos, endPos ) ); }
 
     const char *    FindI( char c, const char * startPos = nullptr, const char * endPos = nullptr ) const;
-    char *          FindI( char c, const char * startPos = nullptr, const char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->FindI( c, startPos, endPos ) ); }
+    char *          FindI( char c, char * startPos = nullptr, char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->FindI( c, startPos, endPos ) ); }
     const char *    FindI( const char * subString, const char * startPos = nullptr, const char * endPos = nullptr ) const;
-    char *          FindI( const char * subString, const char * startPos = nullptr, const char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->FindI( subString, startPos, endPos ) ); }
+    char *          FindI( const char * subString, char * startPos = nullptr, char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->FindI( subString, startPos, endPos ) ); }
     const char *    FindI( const AString & subString, const char * startPos = nullptr, const char * endPos = nullptr ) const;
     char *          FindI( const AString & subString, const char * startPos = nullptr, const char * endPos = nullptr ) { return const_cast< char *>( ((const AString *)this)->FindI( subString, startPos, endPos ) ); }
 
@@ -164,12 +157,6 @@ public:
     static size_t StrLen( const char * string );
     static int32_t StrNCmp( const char * a, const char * b, size_t num );
     static int32_t StrNCmpI( const char * a, const char * b, size_t num );
-
-    // range iteration
-    char * begin()              { return m_Contents; }
-    char * end()                { return m_Contents + m_Length; }
-    const char * begin() const  { return m_Contents; }
-    const char * end() const    { return m_Contents + m_Length; }
 
 protected:
     enum : uint32_t { MEM_MUST_BE_FREED_FLAG    = 0x00000001 };

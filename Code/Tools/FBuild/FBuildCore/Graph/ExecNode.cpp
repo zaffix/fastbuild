@@ -28,11 +28,10 @@ REFLECT_NODE_BEGIN( ExecNode, Node, MetaName( "ExecOutput" ) + MetaFile() )
     REFLECT(        m_ExecInputPathRecurse,     "ExecInputPathRecurse",     MetaOptional() )
     REFLECT_ARRAY(  m_ExecInputExcludePath,     "ExecInputExcludePath",     MetaOptional() + MetaPath() )
     REFLECT_ARRAY(  m_ExecInputExcludedFiles,   "ExecInputExcludedFiles",   MetaOptional() + MetaFile( true ) )
-    REFLECT_ARRAY(  m_ExecInputExcludePattern,  "ExecInputExcludePattern",  MetaOptional() + MetaFile( true ) )
+    REFLECT_ARRAY(  m_ExecInputExcludePattern,  "ExecInputExcludePattern",  MetaOptional() )
     REFLECT(        m_ExecArguments,            "ExecArguments",            MetaOptional() )
     REFLECT(        m_ExecWorkingDir,           "ExecWorkingDir",           MetaOptional() + MetaPath() )
     REFLECT(        m_ExecReturnCode,           "ExecReturnCode",           MetaOptional() )
-    REFLECT(        m_ExecAlwaysShowOutput,     "ExecAlwaysShowOutput",     MetaOptional() )
     REFLECT(        m_ExecUseStdOutAsOutput,    "ExecUseStdOutAsOutput",    MetaOptional() )
     REFLECT(        m_ExecAlways,               "ExecAlways",               MetaOptional() )
     REFLECT_ARRAY(  m_PreBuildDependencyNames,  "PreBuildDependencies",     MetaOptional() + MetaFile() + MetaAllowNonFile() )
@@ -46,7 +45,6 @@ REFLECT_END( ExecNode )
 ExecNode::ExecNode()
     : FileNode( AString::GetEmpty(), Node::FLAG_NONE )
     , m_ExecReturnCode( 0 )
-    , m_ExecAlwaysShowOutput( false )
     , m_ExecUseStdOutAsOutput( false )
     , m_ExecAlways( false )
     , m_ExecInputPathRecurse( true )
@@ -54,12 +52,12 @@ ExecNode::ExecNode()
 {
     m_Type = EXEC_NODE;
 
-    m_ExecInputPattern.EmplaceBack( "*.*" );
+    m_ExecInputPattern.Append( AStackString<>( "*.*" ) );
 }
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool ExecNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool ExecNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .PreBuildDependencies
     if ( !InitializePreBuildDependencies( nodeGraph, iter, function, m_PreBuildDependencyNames ) )
@@ -93,7 +91,6 @@ ExecNode::ExecNode()
                                               m_ExecInputExcludedFiles,
                                               m_ExecInputExcludePattern,
                                               m_ExecInputPathRecurse,
-                                              false, // Don't include read-only status in hash
                                               &m_ExecInputPattern,
                                               "ExecInputPath",
                                               execInputPaths ) )
@@ -117,7 +114,7 @@ ExecNode::~ExecNode() = default;
 
 // DoDynamicDependencies
 //------------------------------------------------------------------------------
-/*virtual*/ bool ExecNode::DoDynamicDependencies( NodeGraph & nodeGraph, bool /*forceClean*/ )
+/*virtual*/ bool ExecNode::DoDynamicDependencies( NodeGraph & nodeGraph, bool UNUSED( forceClean ) )
 {
     // clear dynamic deps from previous passes
     m_DynamicDependencies.Clear();
@@ -127,12 +124,12 @@ ExecNode::~ExecNode() = default;
     const size_t endIndex =  ( 1 + m_NumExecInputFiles + m_ExecInputPath.GetSize() );
     for ( size_t i = startIndex; i < endIndex; ++i )
     {
-        const Node * n = m_StaticDependencies[ i ].GetNode();
+        Node * n = m_StaticDependencies[ i ].GetNode();
 
         ASSERT( n->GetType() == Node::DIRECTORY_LIST_NODE );
 
         // get the list of files
-        const DirectoryListNode * dln = n->CastTo< DirectoryListNode >();
+        DirectoryListNode * dln = n->CastTo< DirectoryListNode >();
         const Array< FileIO::FileInfo > & files = dln->GetFiles();
         m_DynamicDependencies.SetCapacity( m_DynamicDependencies.GetSize() + files.GetSize() );
         for ( const FileIO::FileInfo & file : files )
@@ -149,7 +146,7 @@ ExecNode::~ExecNode() = default;
                 return false;
             }
 
-            m_DynamicDependencies.EmplaceBack( sn );
+            m_DynamicDependencies.Append( Dependency( sn ) );
         }
     }
 
@@ -158,14 +155,14 @@ ExecNode::~ExecNode() = default;
 
 // DetermineNeedToBuild
 //------------------------------------------------------------------------------
-/*virtual*/ bool ExecNode::DetermineNeedToBuild( const Dependencies & deps ) const
+/*virtual*/ bool ExecNode::DetermineNeedToBuild( bool forceClean ) const
 {
     if ( m_ExecAlways )
     {
-        FLOG_BUILD_REASON( "Need to build '%s' (ExecAlways = true)\n", GetName().Get() );
+        FLOG_INFO( "Need to build '%s' (ExecAlways = true)", GetName().Get() );
         return true;
     }
-    return Node::DetermineNeedToBuild( deps );
+    return Node::DetermineNeedToBuild( forceClean );
 }
 
 // DoBuild
@@ -200,9 +197,11 @@ ExecNode::~ExecNode() = default;
     }
 
     // capture all of the stdout and stderr
-    AString memOut;
-    AString memErr;
-    p.ReadAllData( memOut, memErr );
+    AutoPtr< char > memOut;
+    AutoPtr< char > memErr;
+    uint32_t memOutSize = 0;
+    uint32_t memErrSize = 0;
+    p.ReadAllData( memOut, &memOutSize, memErr, &memErrSize );
 
     // Get result
     int result = p.WaitForExit();
@@ -210,20 +209,14 @@ ExecNode::~ExecNode() = default;
     {
         return NODE_RESULT_FAILED;
     }
-    const bool buildFailed = ( result != m_ExecReturnCode );
-    
-    // Print output if appropriate
-    if ( buildFailed ||
-        m_ExecAlwaysShowOutput ||
-        FBuild::Get().GetOptions().m_ShowCommandOutput )
-    {
-        Node::DumpOutput( job, memOut );
-        Node::DumpOutput( job, memErr );
-    }
 
     // did the executable fail?
-    if ( buildFailed )
+    if ( result != m_ExecReturnCode )
     {
+        // something went wrong, print details
+        Node::DumpOutput( job, memOut.Get(), memOutSize );
+        Node::DumpOutput( job, memErr.Get(), memErrSize );
+
         FLOG_ERROR( "Execution failed. Error: %s Target: '%s'", ERROR_STR( result ), GetName().Get() );
         return NODE_RESULT_FAILED;
     }
@@ -232,9 +225,9 @@ ExecNode::~ExecNode() = default;
     {
         FileStream f;
         f.Open( m_Name.Get(), FileStream::WRITE_ONLY );
-        if ( memOut.IsEmpty() == false )
+        if (memOut.Get())
         {
-            f.WriteBuffer( memOut.Get(), memOut.GetLength() );
+            f.WriteBuffer(memOut.Get(), memOutSize);
         }
 
         f.Close();
@@ -252,15 +245,12 @@ void ExecNode::EmitCompilationMessage( const AString & args ) const
 {
     // basic info
     AStackString< 2048 > output;
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        output += "Run: ";
-        output += GetName();
-        output += '\n';
-    }
+    output += "Run: ";
+    output += GetName();
+    output += '\n';
 
     // verbose mode
-    if ( FBuild::Get().GetOptions().m_ShowCommandLines )
+    if ( FLog::ShowInfo() || FBuild::Get().GetOptions().m_ShowCommandLines )
     {
         AStackString< 1024 > verboseOutput;
         verboseOutput.Format( "%s %s\nWorkingDir: %s\nExpectedReturnCode: %i\n",
@@ -272,7 +262,7 @@ void ExecNode::EmitCompilationMessage( const AString & args ) const
     }
 
     // output all at once for contiguousness
-    FLOG_OUTPUT( output );
+    FLOG_BUILD_DIRECT( output.Get() );
 }
 
 // GetFullArgs
@@ -348,7 +338,7 @@ void ExecNode::GetInputFiles(AString & fullArgs, const AString & pre, const AStr
         // Handle directory lists
         if ( n->GetType() == Node::DIRECTORY_LIST_NODE )
         {
-            const DirectoryListNode * dln = n->CastTo< DirectoryListNode >();
+            DirectoryListNode * dln = n->CastTo< DirectoryListNode >();
             const Array< FileIO::FileInfo > & files = dln->GetFiles();
             for ( const FileIO::FileInfo & file : files )
             {

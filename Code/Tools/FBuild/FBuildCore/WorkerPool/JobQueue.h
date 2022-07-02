@@ -50,7 +50,6 @@ public:
     // main thread calls these
     void AddJobToBatch( Node * node );  // Add new job to the staging queue
     void FlushJobBatch();               // Sort and flush the staging queue
-    bool HasJobsToFlush() const { return ( m_LocalJobs_Staging.IsEmpty() == false ); }
     void FinalizeCompletedJobs( NodeGraph & nodeGraph );
     void MainThreadWait( uint32_t maxWaitMS );
 
@@ -81,12 +80,7 @@ private:
     // client side of protocol consumes jobs via this interface
     friend class Client;
     Job *       GetDistributableJobToProcess( bool remote );
-    Job *       OnReturnRemoteJob( uint32_t jobId,
-                                   bool systemError,
-                                   bool & outRaceLost,
-                                   bool & outRaceWon,
-                                   const Node * & outNode,
-                                   uint32_t & outJobSystemErrorCount );
+    Job *       OnReturnRemoteJob( uint32_t jobId );
     void        ReturnUnfinishedDistributableJob( Job * job );
 
     // Semaphore to manage work

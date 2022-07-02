@@ -5,12 +5,14 @@
 //------------------------------------------------------------------------------
 #include "FBuildTest.h"
 
-// FBuildCore
-#include "Tools/FBuild/FBuildCore/BFF/BFFParser.h"
 #include "Tools/FBuild/FBuildCore/FBuild.h"
+#include "Tools/FBuild/FBuildCore/BFF/BFFParser.h"
 #include "Tools/FBuild/FBuildCore/Graph/CompilerNode.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 #include "Tools/FBuild/FBuildCore/Helpers/ToolManifest.h"
+
+#include "Core/Containers/AutoPtr.h"
+#include "Core/FileIO/FileStream.h"
 
 // TestCompiler
 //------------------------------------------------------------------------------
@@ -29,6 +31,7 @@ private:
     void CompilerExecutableAsDependency_NoRebuild() const;
     void MultipleImplicitCompilers() const;
 
+    void Parse( const char * fileName, bool expectFailure = false ) const;
     uint64_t GetToolId( const FBuildForTest & fBuild ) const;
 };
 
@@ -125,52 +128,20 @@ void TestCompiler::BuildCompiler_Implicit() const
     uint64_t toolIdA;
     uint64_t toolIdB;
     uint64_t toolIdC;
-    AStackString<> compilerNodeName;
-
-    // Implicit Definition
-    {
-        FBuildTestOptions options;
-        options.m_ForceCleanBuild = true;
-        options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCompiler/Implicit/implicit.bff";
-        FBuildForTest fBuild( options );
-        TEST_ASSERT( fBuild.Initialize() );
-
-        // Build a file genereated by a Compiler that we compiled
-        TEST_ASSERT( fBuild.Build( "ObjectList" ) );
-
-        // Save DB for use by next test
-        TEST_ASSERT( fBuild.SaveDependencyGraph( "../tmp/Test/TestCompiler/Implicit/implicit.fdb" ) );
-
-        // Ensure node was implicitly created
-        Array< const Node * > compilerNodes;
-        fBuild.GetNodesOfType( Node::COMPILER_NODE, compilerNodes );
-        TEST_ASSERT( compilerNodes.GetSize() == 1 );
-        compilerNodeName = compilerNodes[ 0 ]->GetName();
-
-        // Check stats
-        // - Since we have no object files, the implicitly created Compiler node
-        //   will not be built
-        //               Seen,  Built,  Type
-        CheckStatsNode ( 0,     0,      Node::COMPILER_NODE );
-    }
 
     // Build
     {
         FBuildTestOptions options;
         options.m_ForceCleanBuild = true;
         options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCompiler/Implicit/implicit.bff";
+        options.m_ShowSummary = true; // TODO: REMOVE
         FBuildForTest fBuild( options );
         TEST_ASSERT( fBuild.Initialize() );
 
-        // Build the compiler so we can test it's behavior
-        TEST_ASSERT( fBuild.Build( compilerNodeName ) );
+        // Build a file genereated by a Compiler that we compiled
+        TEST_ASSERT( fBuild.Build( "ObjectList" ) );
 
-        // Ensure node was implicitly created
-        Array< const Node * > compilerNodes;
-        fBuild.GetNodesOfType( Node::COMPILER_NODE, compilerNodes );
-        TEST_ASSERT( compilerNodes.GetSize() == 1 );
-
-        // Save DB for use by next test
+        // Save DB for use by NoRebuild test
         TEST_ASSERT( fBuild.SaveDependencyGraph( "../tmp/Test/TestCompiler/Implicit/implicit.fdb" ) );
 
         // Check stats
@@ -189,7 +160,7 @@ void TestCompiler::BuildCompiler_Implicit() const
         TEST_ASSERT( fBuild.Initialize( "../tmp/Test/TestCompiler/Implicit/implicit.fdb" ) );
 
         // Build a file genereated by a Compiler that we compiled
-        TEST_ASSERT( fBuild.Build( compilerNodeName ) );
+        TEST_ASSERT( fBuild.Build( "ObjectList" ) );
 
         // Save DB for use by NoRebuild test
         TEST_ASSERT( fBuild.SaveDependencyGraph( "../tmp/Test/TestCompiler/Implicit/implicit.fdb" ) );
@@ -211,7 +182,7 @@ void TestCompiler::BuildCompiler_Implicit() const
         TEST_ASSERT( fBuild.Initialize( "../tmp/Test/TestCompiler/Implicit/implicit.fdb" ) );
 
         // Build a file genereated by a Compiler that we compiled
-        TEST_ASSERT( fBuild.Build( compilerNodeName ) );
+        TEST_ASSERT( fBuild.Build( "ObjectList" ) );
 
         // Save DB for use by NoRebuild test
         TEST_ASSERT( fBuild.SaveDependencyGraph( "../tmp/Test/TestCompiler/Implicit/implicit.fdb" ) );
@@ -234,7 +205,6 @@ void TestCompiler::BuildCompiler_Implicit() const
 void TestCompiler::ConflictingFiles1() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestCompiler/conflict1.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Error #1100" ) );
 }
 
 // ConflictingFiles2
@@ -242,7 +212,6 @@ void TestCompiler::ConflictingFiles1() const
 void TestCompiler::ConflictingFiles2() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestCompiler/conflict2.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Error #1100" ) );
 }
 
 // ConflictingFiles3
@@ -250,7 +219,6 @@ void TestCompiler::ConflictingFiles2() const
 void TestCompiler::ConflictingFiles3() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestCompiler/conflict3.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Error #1100" ) );
 }
 
 // ConflictingFiles4
@@ -258,7 +226,6 @@ void TestCompiler::ConflictingFiles3() const
 void TestCompiler::ConflictingFiles4() const
 {
     Parse( "Tools/FBuild/FBuildTest/Data/TestCompiler/conflict4.bff", true ); // Expect failure
-    TEST_ASSERT( GetRecordedOutput().Find( "Error #1100" ) );
 }
 
 // CompilerExecutableAsDependency
@@ -306,9 +273,34 @@ void TestCompiler::MultipleImplicitCompilers() const
     Parse( "Tools/FBuild/FBuildTest/Data/TestCompiler/multipleimplicitcompilers.bff" );
 }
 
+// Parse
+//------------------------------------------------------------------------------
+void TestCompiler::Parse( const char * fileName, bool expectFailure ) const
+{
+    FileStream f;
+    TEST_ASSERT( f.Open( fileName, FileStream::READ_ONLY ) );
+    uint32_t fileSize = (uint32_t)f.GetFileSize();
+    AutoPtr< char > mem( (char *)ALLOC( fileSize + 1 ) );
+    mem.Get()[ fileSize ] = '\000'; // parser requires sentinel
+    TEST_ASSERT( f.Read( mem.Get(), fileSize ) == fileSize );
+
+    FBuild fBuild;
+    NodeGraph ng;
+    BFFParser p( ng );
+    bool parseResult = p.Parse( mem.Get(), fileSize, fileName, 0, 0 );
+    if ( expectFailure )
+    {
+        TEST_ASSERT( parseResult == false ); // Make sure it failed as expected
+    }
+    else
+    {
+        TEST_ASSERT( parseResult == true );
+    }
+}
+
 // GetToolId
 //------------------------------------------------------------------------------
-uint64_t TestCompiler::GetToolId( const FBuildForTest & fBuild ) const
+uint64_t TestCompiler::GetToolId( const FBuildForTest& fBuild ) const
 {
     Array<const Node *> nodes;
     fBuild.GetNodesOfType( Node::COMPILER_NODE, nodes );

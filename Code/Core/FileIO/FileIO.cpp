@@ -7,10 +7,8 @@
 #include "FileStream.h"
 
 // Core
-#include "Core/Env/ErrorFormat.h"
 #include "Core/FileIO/PathUtils.h"
 #include "Core/Process/Thread.h"
-#include "Core/Math/Conversions.h"
 #include "Core/Profile/Profile.h"
 #include "Core/Strings/AStackString.h"
 #include "Core/Time/Timer.h"
@@ -53,7 +51,7 @@
     class OSXHelper_utimensat
     {
     public:
-        typedef int (*FuncPtr)( int dirfd, const char * pathname, const struct timespec times[ 2 ], int flags );
+        typedef int (*FuncPtr)(int dirfd, const char *pathname, const struct timespec times[2], int flags);
         
         OSXHelper_utimensat()
         {
@@ -77,7 +75,7 @@
 //------------------------------------------------------------------------------
 /*static*/ bool FileIO::FileExists( const char * fileName )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 #if defined( __WINDOWS__ )
     // see if we can get attributes
     DWORD attributes = GetFileAttributes( fileName );
@@ -128,7 +126,7 @@
 //------------------------------------------------------------------------------
 /*static*/ bool FileIO::FileDelete( const char * fileName )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 #if defined( __WINDOWS__ )
     BOOL result = DeleteFile( fileName );
     if ( result == FALSE )
@@ -149,9 +147,8 @@
 
 // Copy
 //------------------------------------------------------------------------------
-/*static*/ bool FileIO::FileCopy( const char * srcFileName,
-                                  const char * dstFileName,
-                                  bool allowOverwrite )
+/*static*/ bool FileIO::FileCopy( const char * srcFileName, const char * dstFileName,
+                              bool allowOverwrite )
 {
 #if defined( __WINDOWS__ )
     DWORD flags = COPY_FILE_COPY_SYMLINK;
@@ -176,7 +173,7 @@
             }
 
             // try to remove read-only flag on dst file
-            dwAttrs = ( dwAttrs & (uint32_t)(~FILE_ATTRIBUTE_READONLY) );
+            dwAttrs = ( dwAttrs & ~FILE_ATTRIBUTE_READONLY );
             if ( FALSE == SetFileAttributes( dstFileName, dwAttrs ) )
             {
                 return false; // failed to remove read-only flag
@@ -253,25 +250,10 @@
         return false;
     }
 
-    ssize_t bytesCopied = 0;
-    ssize_t offset = 0;
+    ssize_t bytesCopied = sendfile( dest, source, 0, stat_source.st_size );
 
-    while ( offset < stat_source.st_size )
-    {
-        // sendfile has an arbitrary limit of 0x7ffff000 on all systems (even if 64bit)
-        const ssize_t remaining = stat_source.st_size - offset;
-        const ssize_t count = Math::Min<ssize_t>( remaining, 0x7ffff000 );
-
-        const ssize_t sent = sendfile( dest, source, &offset, count );
-        if ( sent <= 0 )
-        {
-            break; // Copy failed (incomplete)
-        }
-        bytesCopied += sent;
-    }
-
-    close( source );
-    close( dest );
+    close(source);
+    close(dest);
 
     return ( bytesCopied == stat_source.st_size );
 #else
@@ -320,9 +302,9 @@
 // GetFilesEx
 //------------------------------------------------------------------------------
 /*static*/ bool FileIO::GetFilesEx( const AString & path,
-                                    const Array< AString > * patterns,
-                                    bool recurse,
-                                    Array< FileInfo > * results )
+                                  const Array< AString > * patterns,
+                                  bool recurse,
+                                  Array< FileInfo > * results )
 {
     ASSERT( results );
 
@@ -545,7 +527,7 @@
 /*static*/ bool FileIO::EnsurePathExists( const AString & path )
 {
     // if the entire path already exists, nothing is to be done
-    if ( DirectoryExists( path ) )
+    if( DirectoryExists( path ) )
     {
         return true;
     }
@@ -689,14 +671,10 @@
 {
     #if defined( __WINDOWS__ )
         // open the file
-        HANDLE hFile = CreateFile( fileName.Get(),
-                                   FILE_WRITE_ATTRIBUTES,
-                                   FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                   nullptr,
-                                   OPEN_EXISTING,
-                                   0,
-                                   nullptr);
-        if ( hFile == INVALID_HANDLE_VALUE )
+        // TOOD:B Check these args
+        HANDLE hFile = CreateFile( fileName.Get(), GENERIC_WRITE, FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, 0, nullptr);
+        if( hFile == INVALID_HANDLE_VALUE )
         {
             return false;
         }
@@ -720,23 +698,23 @@
         if ( gOSXHelper_utimensat.m_FuncPtr )
         {
             struct timespec t[ 2 ];
-            t[ 0 ].tv_sec = fileTime / 1000000000ULL;
-            t[ 0 ].tv_nsec = ( fileTime % 1000000000ULL );
-            t[ 1 ] = t[ 0 ];
+            t[0].tv_sec = fileTime / 1000000000ULL;
+            t[0].tv_nsec = ( fileTime % 1000000000ULL );
+            t[1] = t[0];
             return ( (gOSXHelper_utimensat.m_FuncPtr)( 0, fileName.Get(), t, 0 ) == 0 );
         }
     
         // Fallback to regular low-resolution filetime setting
         struct timeval t[ 2 ];
-        t[ 0 ].tv_sec = fileTime / 1000000000ULL;
-        t[ 0 ].tv_usec = ( fileTime % 1000000000ULL ) / 1000;
-        t[ 1 ] = t[ 0 ];
+        t[0].tv_sec = fileTime / 1000000000ULL;
+        t[0].tv_usec = ( fileTime % 1000000000ULL ) / 1000;
+        t[1] = t[0];
         return ( utimes( fileName.Get(), t ) == 0 );
     #elif defined( __LINUX__ )
         struct timespec t[ 2 ];
-        t[ 0 ].tv_sec = fileTime / 1000000000ULL;
-        t[ 0 ].tv_nsec = ( fileTime % 1000000000ULL );
-        t[ 1 ] = t[ 0 ];
+        t[0].tv_sec = fileTime / 1000000000ULL;
+        t[0].tv_nsec = ( fileTime % 1000000000ULL );
+        t[1] = t[0];
         return ( utimensat( 0, fileName.Get(), t, 0 ) == 0 );
     #else
         #error Unknown platform
@@ -780,7 +758,7 @@
 
         // determine the new attributes
         DWORD dwNewAttrs = ( readOnly ) ? ( dwAttrs | FILE_ATTRIBUTE_READONLY )
-                                        : ( dwAttrs & (uint32_t)(~FILE_ATTRIBUTE_READONLY) );
+                                        : ( dwAttrs & ~FILE_ATTRIBUTE_READONLY );
 
         // nothing to do if they are the same
         if ( dwNewAttrs == dwAttrs )
@@ -1113,11 +1091,12 @@
     #endif
 }
 
+
 // GetFilesRecurse
 //------------------------------------------------------------------------------
 /*static*/ void FileIO::GetFilesRecurseEx( AString & pathCopy,
-                                           const Array< AString > * patterns,
-                                           Array< FileInfo > * results )
+                                         const Array< AString > * patterns,
+                                         Array< FileInfo > * results )
 {
     const uint32_t baseLength = pathCopy.GetLength();
 
@@ -1126,7 +1105,7 @@
 
         // recurse into directories
         WIN32_FIND_DATA findData;
-        HANDLE hFind = FindFirstFileEx( pathCopy.Get(), FindExInfoBasic, &findData, FindExSearchNameMatch, nullptr, 0 );
+        HANDLE hFind = FindFirstFileEx( pathCopy.Get(), FindExInfoBasic, &findData, FindExSearchLimitToDirectories, nullptr, 0 );
         if ( hFind == INVALID_HANDLE_VALUE)
         {
             return;
@@ -1149,6 +1128,24 @@
                 pathCopy += findData.cFileName;
                 pathCopy += NATIVE_SLASH;
                 GetFilesRecurseEx( pathCopy, patterns, results );
+            }
+        }
+        while ( FindNextFile( hFind, &findData ) != 0 );
+        FindClose( hFind );
+
+        // do files in this directory
+        pathCopy.SetLength( baseLength );
+        pathCopy += '*';
+        hFind = FindFirstFileEx( pathCopy.Get(), FindExInfoBasic, &findData, FindExSearchNameMatch, nullptr, 0 );
+        if ( hFind == INVALID_HANDLE_VALUE)
+        {
+            return;
+        }
+
+        do
+        {
+            if ( findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY )
+            {
                 continue;
             }
 
@@ -1268,7 +1265,7 @@
 //------------------------------------------------------------------------------
 /*static*/ void FileIO::GetFilesNoRecurseEx( const char * path,
                                              const Array< AString > * patterns,
-                                             Array< FileInfo > * results )
+                                           Array< FileInfo > * results )
 {
     AStackString< 256 > pathCopy( path );
     PathUtils::EnsureTrailingSlash( pathCopy );
@@ -1416,68 +1413,10 @@
             // timeout so we don't get stuck in here forever
             if ( timer.GetElapsed() > (float)timeoutSeconds )
             {
-                ASSERTM( false, "WorkAroundForWindowsFilePermissionProblem Failed\n"
-                                "File   : %s\n"
-                                "Error  : %s\n"
-                                "Timeout: %u s",
-                                fileName.Get(), LAST_ERROR_STR, timeoutSeconds );
+                ASSERT( false && "WorkAroundForWindowsFilePermissionProblem Failed!" );
                 return;
             }
         }
-    }
-#endif
-
-// IsWindowsLongPathSupportEnabled
-//------------------------------------------------------------------------------
-#if defined( __WINDOWS__ )
-    /*static*/ bool FileIO::IsWindowsLongPathSupportEnabled()
-    {
-        // Return the cached value which is valid for the lifetime of the application
-        static bool cachedValue = IsWindowsLongPathSupportEnabledInternal();
-        return cachedValue;
-    }
-#endif
-
-// IsWindowsLongPathSupportEnabledInternal
-//------------------------------------------------------------------------------
-#if defined( __WINDOWS__ )
-    /*static*/ bool FileIO::IsWindowsLongPathSupportEnabledInternal()
-    {
-        // Long Paths are available on Windows if:
-        //   a) A registry key is set
-        // AND
-        //   b) The application's manifest opts in to long paths
-        //
-        // When both requirements are met, existing Windows functions can seamlessly
-        // support longer paths.
-        //
-        // See: https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file#enable-long-paths-in-windows-10-version-1607-and-later
-        //
-        // Out applications embed the manifest, so we can query the registry key
-        // to see if support is available.
-        //
-
-        // Open Registry Entry
-        HKEY key;
-        if ( RegOpenKeyEx( HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\FileSystem", 0, KEY_READ, &key ) != ERROR_SUCCESS )
-        {
-            return false; // Entry doesn't exit
-        }
-
-        // Read Value
-        DWORD value = 0;
-        DWORD valueSize = sizeof(DWORD);
-        const LONG result = ::RegQueryValueEx( key,
-                                                "LongPathsEnabled",
-                                                nullptr,
-                                                nullptr,
-                                                reinterpret_cast<LPBYTE>( &value ),
-                                                &valueSize );
-
-        VERIFY( RegCloseKey( key ) == ERROR_SUCCESS );
-
-        // Was key found and set to 1 (enabled)?
-        return ( ( result == ERROR_SUCCESS ) && ( value == 1 ) );
     }
 #endif
 

@@ -5,20 +5,14 @@
 //------------------------------------------------------------------------------
 #include "Compressor.h"
 
-// FBuildCore
-#include "Tools/FBuild/FBuildCore/FBuild.h"
-
-// Core
-#include "Core/Containers/UniquePtr.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/Env/Assert.h"
 #include "Core/Env/Types.h"
 #include "Core/Math/Conversions.h"
 #include "Core/Mem/Mem.h"
 #include "Core/Profile/Profile.h"
 
-// External
 #include "lz4.h"
-#include "lz4hc.h"
 
 #include <memory.h>
 
@@ -38,7 +32,7 @@ Compressor::~Compressor()
 
 // IsValidData
 //------------------------------------------------------------------------------
-/*static*/ bool Compressor::IsValidData( const void * data, size_t dataSize )
+bool Compressor::IsValidData( const void * data, size_t dataSize ) const
 {
     const Header * header = (const Header *)data;
     if ( header->m_CompressionType > 1 )
@@ -56,50 +50,21 @@ Compressor::~Compressor()
     return true;
 }
 
-// GetUncompressedSize
-//------------------------------------------------------------------------------
-/*static*/ uint32_t Compressor::GetUncompressedSize( const void * data, size_t dataSize )
-{
-    // Only valid to call on data that is known to be compressor format
-    ASSERT( IsValidData( data, dataSize ) );
-    (void)dataSize;
-
-    const Header * header = (const Header *)data;
-    return header->m_UncompressedSize;
-}
-
 // Compress
 //------------------------------------------------------------------------------
-bool Compressor::Compress( const void * data, size_t dataSize, int32_t compressionLevel )
+bool Compressor::Compress( const void * data, size_t dataSize )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     ASSERT( data );
     ASSERT( m_Result == nullptr );
 
     // allocate worst case output size for LZ4
     const int worstCaseSize = LZ4_compressBound( (int)dataSize );
-    UniquePtr< char > output( (char *)ALLOC( (size_t)worstCaseSize ) );
-
-    int32_t compressedSize;
+    AutoPtr< char > output( (char *)ALLOC( (size_t)worstCaseSize ) );
 
     // do compression
-    if ( compressionLevel > 0 )
-    {
-        // Higher compression, using LZ4HC
-        compressedSize = LZ4_compress_HC( (const char*)data, output.Get(), (int)dataSize, worstCaseSize, compressionLevel );
-    }
-    else if ( compressionLevel < 0 )
-    {
-        // Lower compression, using regular LZ4
-        const int32_t acceleration = ( 0 - compressionLevel );
-        compressedSize = LZ4_compress_fast( (const char*)data, output.Get(), (int)dataSize, worstCaseSize, acceleration );
-    }
-    else
-    {
-        // Disable compression
-        compressedSize = (int32_t)dataSize; // Act as if compression achieved nothing
-    }
+    const int compressedSize = LZ4_compress_default( (const char*)data, output.Get(), (int)dataSize, worstCaseSize);
 
     // did the compression yield any benefit?
     const bool compressed = ( compressedSize < (int)dataSize );
@@ -107,9 +72,9 @@ bool Compressor::Compress( const void * data, size_t dataSize, int32_t compressi
     if ( compressed )
     {
         // trim memory usage to compressed size
-        m_Result = ALLOC( (uint32_t)compressedSize + sizeof( Header ) );
+        m_Result = ALLOC( compressedSize + sizeof( Header ) );
         memcpy( (char *)m_Result + sizeof( Header ), output.Get(), (size_t)compressedSize );
-        m_ResultSize = (uint32_t)compressedSize + sizeof( Header );
+        m_ResultSize = compressedSize + sizeof( Header );
     }
     else
     {
@@ -123,7 +88,7 @@ bool Compressor::Compress( const void * data, size_t dataSize, int32_t compressi
     Header * header = (Header*)m_Result;
     header->m_CompressionType = compressed ? 1u : 0u;   // compression type
     header->m_UncompressedSize = (uint32_t)dataSize;    // input size
-    header->m_CompressedSize = compressed ? (uint32_t)compressedSize : (uint32_t)dataSize;    // output size
+    header->m_CompressedSize = compressed ? compressedSize : (uint32_t)dataSize;    // output size
 
     return compressed;
 }
@@ -132,7 +97,7 @@ bool Compressor::Compress( const void * data, size_t dataSize, int32_t compressi
 //------------------------------------------------------------------------------
 bool Compressor::Decompress( const void * data )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     ASSERT( data );
     ASSERT( m_Result == nullptr );
@@ -143,7 +108,7 @@ bool Compressor::Decompress( const void * data )
     if ( header->m_CompressionType == 0 )
     {
         m_Result = ALLOC( header->m_UncompressedSize );
-        memcpy( m_Result, (const char *)data + sizeof( Header ), header->m_UncompressedSize );
+        memcpy( m_Result, (char *)data + sizeof( Header ), header->m_UncompressedSize );
         m_ResultSize = header->m_UncompressedSize;
         return true;
     }

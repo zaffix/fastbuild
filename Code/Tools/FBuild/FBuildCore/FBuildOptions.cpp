@@ -16,6 +16,7 @@
 #include "Core/Tracing/Tracing.h"
 
 // system
+#include <stdio.h> // for sscanf
 #if defined( __WINDOWS__ )
     #include "Core/Env/WindowsHeader.h" // for QueryDosDeviceA
 #endif
@@ -60,57 +61,17 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
     {
         AStackString<> thisArg( argv[ i ] );
 
-        // Check WSL wrapper
-        #if defined( __WINDOWS__ )
-            if ( ( m_WrapperMode  == WRAPPER_MODE_NONE ) && ( thisArg == "-wsl" ) )
-            {
-                // -wsl must be the first arg
-                if ( i != 1 )
-                {
-                    OUTPUT( "FBuild: Error: -wsl must be the first argument\n" );
-                    OUTPUT( "Try \"%s -help\"\n", programName.Get() );
-                    return OPTIONS_ERROR;
-                }
-
-                m_WrapperMode = WRAPPER_MODE_WINDOWS_SUBSYSTEM_FOR_LINUX;
-                const int32_t wslExeIndex = ( i + 1 );
-                if ( wslExeIndex >= argc )
-                {
-                    OUTPUT( "FBuild: Error: Missing <wslPath> for '-wsl' argument\n" );
-                    OUTPUT( "Try \"%s -help\"\n", programName.Get() );
-                    return OPTIONS_ERROR;
-                }
-                m_WSLPath = argv[ wslExeIndex ];
-                i++; // Skip extra arg we've consumed for the wsl exe
-
-                continue;
-            }
-        #endif
-
         // Store into full arg string
         if ( m_Args.IsEmpty() == false )
         {
             m_Args += ' ';
         }
-
-        // Don't validate args for WSL forwarding
-        if ( m_WrapperMode == WRAPPER_MODE_WINDOWS_SUBSYSTEM_FOR_LINUX )
-        {
-            m_Args += thisArg;
-            continue;
-        }
+        m_Args += thisArg;
 
         // options start with a '-'
         if ( thisArg.BeginsWith( '-' ) )
         {
-            m_Args += thisArg;
-
-            if ( thisArg == "-continueafterdbmove" )
-            {
-                m_ContinueAfterDBMove = true;
-                continue;
-            }
-            else if ( thisArg == "-cache" )
+            if ( thisArg == "-cache" )
             {
                 m_UseCacheRead = true;
                 m_UseCacheWrite = true;
@@ -134,8 +95,10 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             else if ( thisArg == "-cachetrim" )
             {
                 const int sizeIndex = ( i + 1 );
+                PRAGMA_DISABLE_PUSH_MSVC( 4996 ) // This function or variable may be unsafe...
                 if ( ( sizeIndex >= argc ) ||
-                     ( AString::ScanS( argv[ sizeIndex ], "%u", &m_CacheTrim ) ) != 1 )
+                     ( sscanf( argv[ sizeIndex ], "%u", &m_CacheTrim ) ) != 1 ) // TODO:C Consider using sscanf_s
+                PRAGMA_DISABLE_POP_MSVC // 4996
                 {
                     OUTPUT( "FBuild: Error: Missing or bad <sizeMiB> for '-cachetrim' argument\n" );
                     OUTPUT( "Try \"%s -help\"\n", programName.Get() );
@@ -153,26 +116,6 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_CacheVerbose = true;
                 continue;
             }
-            else if ( thisArg == "-cachecompressionlevel" )
-            {
-                const int sizeIndex = ( i + 1 );
-                int32_t cacheCompressionLevel;
-                if ( ( sizeIndex >= argc ) ||
-                     ( AString::ScanS( argv[ sizeIndex ], "%i", &cacheCompressionLevel ) != 1 ) ||
-                     ( ( cacheCompressionLevel < -128 ) || ( cacheCompressionLevel > 12 ) ) ) // See Compressor for valid ranges
-                {
-                    OUTPUT( "FBuild: Error: Missing or bad <level> for '-cachecompressionlevel' argument\n" );
-                    OUTPUT( "Try \"%s -help\"\n", programName.Get() );
-                    return OPTIONS_ERROR;
-                }
-                m_CacheCompressionLevel = static_cast< int16_t >( cacheCompressionLevel );
-                i++; // skip extra arg we've consumed
-                
-                // add to args we might pass to subprocess
-                m_Args += ' ';
-                m_Args += argv[ sizeIndex ];
-                continue;
-            }
             else if ( thisArg == "-clean" )
             {
                 m_ForceCleanBuild = true;
@@ -185,7 +128,7 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             }
             else if ( thisArg == "-config" )
             {
-                const int32_t pathIndex = ( i + 1 );
+                int pathIndex = ( i + 1 );
                 if ( pathIndex >= argc )
                 {
                     OUTPUT( "FBuild: Error: Missing <path> for '-config' argument\n" );
@@ -202,10 +145,10 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_Args += '"';
                 continue;
             }
-            #if defined( __WINDOWS__ )
+            #ifdef DEBUG
                 else if ( thisArg == "-debug" )
                 {
-                    Env::ShowMsgBox( "FBuild", "Please attach debugger and press ok\n\n(-debug command line used)" );
+                    ASSERT( false && "Break due to '-debug' argument - attach debugger!" );
                     continue;
                 }
             #endif
@@ -218,25 +161,11 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             {
                 m_AllowDistributed = true;
                 m_DistVerbose = true;
-                m_ShowBuildReason = true;
-                continue;
-            }
-            else if ( thisArg == "-dot" )
-            {
-                m_GenerateDotGraph = true;
-                m_GenerateDotGraphFull = false;
-                continue;
-            }
-            else if ( thisArg == "-dotfull" )
-            {
-                m_GenerateDotGraph = true;
-                m_GenerateDotGraphFull = true;
                 continue;
             }
             else if ( thisArg == "-fastcancel" )
             {
-                // This is on by default now
-                OUTPUT( "FBuild: Warning: -fastcancel is deprecated. (\"fastcancel\" is on by default)\n" );
+                m_FastCancel = true;
                 continue;
             }
             else if ( thisArg == "-fixuperrorpaths" )
@@ -266,8 +195,10 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 #endif
                 continue;
             }
+            PRAGMA_DISABLE_PUSH_MSVC( 4996 ) // This function or variable may be unsafe...
             else if ( thisArg.BeginsWith( "-j" ) &&
-                      ( thisArg.Scan( "-j%u", &m_NumWorkerThreads ) == 1 ) )
+                      sscanf( thisArg.Get(), "-j%u", &m_NumWorkerThreads ) == 1 ) // TODO:C Consider using sscanf_s
+            PRAGMA_DISABLE_POP_MSVC // 4996
             {
                 // only accept within sensible range
                 if ( m_NumWorkerThreads <= 256 )
@@ -280,14 +211,10 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_EnableMonitor = true;
                 continue;
             }
-            else if ( thisArg == "-nofastcancel" )
+            else if ( thisArg == "-nooutputbuffering" )
             {
-                m_FastCancel = false;
-                continue;
-            }
-            else if (thisArg == "-nolocalrace")
-            {
-                m_AllowLocalRace = false;
+                // this doesn't do anything any more
+                OUTPUT( "FBuild: Warning: -nooutputbuffering is deprecated.\n" );
                 continue;
             }
             else if ( thisArg == "-noprogress" )
@@ -312,11 +239,6 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_NoUnity = true;
                 continue;
             }
-            else if ( thisArg == "-profile" )
-            {
-                m_Profile = true;
-                continue;
-            }
             else if ( thisArg == "-progress" )
             {
                 m_ShowProgress = true;
@@ -325,9 +247,8 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             }
             else if ( thisArg == "-quiet" )
             {
-                m_ShowCommandSummary = false;
-                m_ShowTotalTimeTaken = false;
-                m_ShowVerbose = false;
+                m_ShowBuildCommands = false;
+                m_ShowInfo = false;
                 continue;
             }
             else if ( thisArg == "-report" )
@@ -338,11 +259,6 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             else if ( thisArg == "-showcmds" )
             {
                 m_ShowCommandLines = true;
-                continue;
-            }
-            else if ( thisArg == "-showcmdoutput" )
-            {
-                m_ShowCommandOutput = true;
                 continue;
             }
             else if ( thisArg == "-showdeps" )
@@ -368,9 +284,7 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
             }
             else if ( thisArg == "-verbose" )
             {
-                m_ShowVerbose = true;
-                m_ShowCommandLines = true;
-                m_ShowCommandOutput = true;
+                m_ShowInfo = true;
                 m_CacheVerbose = true;
                 continue;
             }
@@ -385,28 +299,27 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
                 m_WaitMode = true;
                 continue;
             }
-            else if ( thisArg == "-why" )
+            else if ( thisArg == "-wrapper")
             {
-                m_ShowBuildReason = true;
+                #if defined( __WINDOWS__ )
+                    m_WrapperMode = WRAPPER_MODE_MAIN_PROCESS;
+                #endif
                 continue;
             }
-            #if defined( __WINDOWS__ )
-                else if ( thisArg == "-wrapper")
-                {
-                    m_WrapperMode = WRAPPER_MODE_MAIN_PROCESS;
-                    continue;
-                }
-                else if ( thisArg == "-wrapperintermediate") // Internal use only
-                {
+            else if ( thisArg == "-wrapperintermediate") // Internal use only
+            {
+                #if defined( __WINDOWS__ )
                     m_WrapperMode = WRAPPER_MODE_INTERMEDIATE_PROCESS;
-                    continue;
-                }
-                else if ( thisArg == "-wrapperfinal") // Internal use only
-                {
+                #endif
+                continue;
+            }
+            else if ( thisArg == "-wrapperfinal") // Internal use only
+            {
+                #if defined( __WINDOWS__ )
                     m_WrapperMode = WRAPPER_MODE_FINAL_PROCESS;
-                    continue;
-                }
-            #endif
+                #endif
+                continue;
+            }
 
             // can't use FLOG_ERROR as FLog is not initialized
             OUTPUT( "FBuild: Error: Unknown argument '%s'\n", thisArg.Get() );
@@ -415,10 +328,6 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
         }
         else
         {
-            m_Args += '"'; // surround with quotes to avoid problems with spaces in target name
-            m_Args += thisArg;
-            m_Args += '"';
-
             // assume target
             m_Targets.Append( thisArg );
         }
@@ -433,8 +342,8 @@ FBuildOptions::OptionsResult FBuildOptions::ProcessCommandLine( int argc, char *
     // Default to build "all"
     if ( m_Targets.IsEmpty() )
     {
-        FLOG_VERBOSE( "No target specified, defaulting to target 'all'" );
-        m_Targets.EmplaceBack( "all" );
+        FLOG_INFO( "No target specified, defaulting to target 'all'" );
+        m_Targets.Append( AStackString<>( "all" ) );
     }
 
     // When building multiple targets, try to build as much as possible
@@ -565,66 +474,56 @@ void FBuildOptions::SetWorkingDir( const AString & path )
 void FBuildOptions::DisplayHelp( const AString & programName ) const
 {
     DisplayVersion();
-    OUTPUT( "--------------------------------------------------------------------------------\n"
+    OUTPUT( "----------------------------------------------------------------------\n"
             "Usage: %s [options] [target1]..[targetn]\n", programName.Get() );
-    OUTPUT( "--------------------------------------------------------------------------------\n"
+    OUTPUT( "----------------------------------------------------------------------\n"
             "Options:\n"
-            " -cache[read|write]\n"
-            "                   Control use of the build cache.\n"
-            " -cachecompressionlevel <level>\n"
-            "                   Control compression for cache artifacts (default: -1)\n"
-            "                   - <= -1 : less compression, with -128 being the lowest\n"
-            "                   - ==  0 : disable compression\n"
-            "                   - >=  1 : more compression, with 12 being the highest\n"
-            " -cacheinfo        Output cache statistics.\n"
-            " -cachetrim <size> Trim the cache to the given size in MiB.\n"
-            " -cacheverbose     Emit details about cache interactions.\n"
-            " -clean            Force a clean build.\n"
-            " -compdb           Generate JSON compilation database for targets.\n"
-            " -config <path>    Explicitly specify the config file to use.\n"
-            " -continueafterdbmove\n"
-            "       Allow builds after a DB move.\n"
-            " -debug            (Windows) Break at startup, to attach debugger.\n"
-            " -dist             Allow distributed compilation.\n"
-            " -distverbose      Print detailed info for distributed compilation.\n"
-            " -dot[full]        Emit known dependency tree info for specified targets to an\n"
-            "                   fbuild.gv file in DOT format.\n"
-            " -fixuperrorpaths  Reformat error paths to be Visual Studio friendly.\n"
-            " -forceremote      Force distributable jobs to only be built remotely.\n"
-            " -help             Show this help.\n"
-            " -ide              Enable multiple options when building from an IDE.\n"
-            "                   Enables: -noprogress, -fixuperrorpaths &\n"
-            "                   -wrapper (Windows)\n"
-            " -j<x>             Explicitly set LOCAL worker thread count X, instead of\n"
-            "                   default of hardware thread count.\n"
-            " -monitor          Emit a machine-readable file while building.\n"
-            " -nofastcancel     Disable aborting other tasks as soon any task fails.\n"
-            " -nolocalrace      Disable local race of remotely started jobs.\n"
-            " -noprogress       Don't show the progress bar while building.\n"
-            " -nounity          (Experimental) Build files individually, ignoring Unity.\n"
-            " -nostoponerror    On error, favor building as much as possible.\n"
+            " -cache[read|write] Control use of the build cache.\n"
+            " -cacheinfo     Output cache statistics.\n"
+            " -cachetrim [size] Trim the cache to the given size in MiB.\n"
+            " -cacheverbose  Emit details about cache interactions.\n"
+            " -clean         Force a clean build.\n"
+            " -compdb        Generate JSON compilation database for specified targets.\n"
+            " -config [path] Explicitly specify the config file to use.\n" );
+#ifdef DEBUG
+    OUTPUT( " -debug         Break at startup, to attach debugger.\n" );
+#endif
+    OUTPUT( " -dist          Allow distributed compilation.\n"
+            " -distverbose   Print detailed info for distributed compilation.\n"
+            " -fastcancel    [Experimental] Fast cancellation behavior on build failure.\n"
+            " -fixuperrorpaths Reformat error paths to be Visual Studio friendly.\n"
+            " -forceremote   Force distributable jobs to only be built remotely.\n"
+            " -help          Show this help.\n"
+            " -ide           Enable multiple options when building from an IDE.\n"
+            "                Enables: -noprogress, -fixuperrorpaths &\n"
+            "                -wrapper (Windows)\n"
+            " -j[x]          Explicitly set LOCAL worker thread count X, instead of\n"
+            "                default of hardware thread count.\n"
+            " -monitor       Emit a machine-readable file while building.\n"
+            " -noprogress    Don't show the progress bar while building.\n"
+            " -nounity       [Experimental] Build files individually instead of in Unity.\n"
+            " -nostoponerror Don't stop building on first error. Try to build as much\n"
+            "                as possible.\n"
             " -nosummaryonerror Hide the summary if the build fails. Implies -summary.\n"
-            " -profile          Output an fbuild_profiling.json describing the build.\n"
-            " -progress         Show build progress bar even if stdout is redirected.\n"
-            " -quiet            Don't show build output.\n"
-            " -report           Ouput report.html at build end. (Increases build time)\n"
-            " -showcmds         Show command lines used to launch external processes.\n"
-            " -showcmdoutput    Show output of external processes.\n"
-            " -showdeps         Show known dependency tree for specified targets.\n"
-            " -showtargets      Display primary targets, excluding those marked \"Hidden\".\n"
-            " -showalltargets   Display primary targets, including those marked \"Hidden\".\n"
-            " -summary          Show a summary at the end of the build.\n"
-            " -verbose          Show detailed diagnostic info. (Increases built time)\n"
-            " -version          Print version and exit.\n"
-            " -vs               VisualStudio mode. Same as -ide.\n"
-            " -wait             Wait for a previous build to complete before starting.\n"
-            "                   (Slower than building both targets in one invocation).\n"
-            " -why              Show build reason for each item.\n"
-            " -wrapper          (Windows) Spawn a sub-process to gracefully handle\n"
-            "                   termination from Visual Studio.\n"
-            " -wsl <wslPath> <args...>\n"
-            "                   (Windows) Forward to the Windows Subsystem for Linux\n"
-            "--------------------------------------------------------------------------------\n" );
+            " -progress      Show the progress bar while building, even if stdout is redirected.\n"
+            " -quiet         Don't show build output.\n"
+            " -report        Ouput a detailed report.html at the end of the build.\n"
+            "                This will lengthen the total build time.\n"
+            " -showcmds      Show command lines used to launch external processes.\n"
+            " -showdeps      Show known dependency tree for specified targets.\n"
+            " -showtargets   Display list of primary targets, excluding those marked \"Hidden\".\n"
+            " -showalltargets Display list of primary targets, including those marked \"Hidden\".\n"
+            " -summary       Show a summary at the end of the build.\n"
+            " -verbose       Show detailed diagnostic information. This will slow\n"
+            "                down building.\n"
+            " -version       Print version and exit. No other work will be\n"
+            "                performed.\n"
+            " -vs            VisualStudio mode. Same as -ide.\n"
+            " -wait          Wait for a previous build to complete before starting.\n"
+            "                (Slower than building both targets in one invocation).\n"
+            " -wrapper       (Windows only) Spawn a sub-process to gracefully handle\n"
+            "                termination from Visual Studio.\n"
+            "----------------------------------------------------------------------\n" );
 }
 
 // DisplayVersion
@@ -636,8 +535,8 @@ void FBuildOptions::DisplayVersion() const
     #else
         #define VERSION_CONFIG ""
     #endif
-    OUTPUT( "FASTBuild " FBUILD_VERSION_STRING " " VERSION_CONFIG "- "
-            "Copyright 2012-2021 Franta Fulin - https://www.fastbuild.org\n" );
+    OUTPUT( "FASTBuild - " FBUILD_VERSION_STRING " " VERSION_CONFIG "- "
+            "Copyright 2012-2019 Franta Fulin - http://www.fastbuild.org\n" );
     #undef VERSION_CONFIG
 }
 

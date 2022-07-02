@@ -13,7 +13,7 @@
 //------------------------------------------------------------------------------
 /*static*/ bool NetworkStartupHelper::s_Started = false;
 /*static*/ Mutex NetworkStartupHelper::s_Mutex;
-/*static*/ volatile bool * NetworkStartupHelper::s_MainShutdownFlag = nullptr;
+/*static*/ volatile bool * NetworkStartupHelper::s_MasterShutdownFlag = nullptr;
 #if defined( __WINDOWS__ )
     /*static*/ WSADATA NetworkStartupHelper::s_WSAData;
 #elif defined( __LINUX__ ) || defined( __OSX__ )
@@ -44,12 +44,12 @@ NetworkStartupHelper::NetworkStartupHelper()
     s_Started = true;
 }
 
-// SetMainShutdownFlag
+// SetMasterShutdownFlag
 //------------------------------------------------------------------------------
-/*static*/ void NetworkStartupHelper::SetMainShutdownFlag( volatile bool * shutdownFlag )
+/*static*/ void NetworkStartupHelper::SetMasterShutdownFlag( volatile bool * shutdownFlag )
 {
     MutexHolder mh( s_Mutex );
-    s_MainShutdownFlag = shutdownFlag;
+    s_MasterShutdownFlag = shutdownFlag;
 }
 
 // IsShuttingDown
@@ -57,7 +57,7 @@ NetworkStartupHelper::NetworkStartupHelper()
 /*static*/ bool NetworkStartupHelper::IsShuttingDown()
 {
     MutexHolder mh( s_Mutex );
-    return ( s_MainShutdownFlag ) ? AtomicLoadRelaxed( s_MainShutdownFlag ) : false;
+    return ( s_MasterShutdownFlag ) ? AtomicLoadRelaxed( s_MasterShutdownFlag ) : false;
 }
 
 //------------------------------------------------------------------------------

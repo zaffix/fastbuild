@@ -21,19 +21,13 @@ REFLECT_NODE_BEGIN( CompilerNode, Node, MetaNone() )
     REFLECT_ARRAY( m_ExtraFiles,    "ExtraFiles",           MetaOptional() + MetaFile() )
     REFLECT_ARRAY( m_CustomEnvironmentVariables, "CustomEnvironmentVariables",  MetaOptional() )
     REFLECT( m_AllowDistribution,   "AllowDistribution",    MetaOptional() )
-    REFLECT( m_AllowResponseFile,   "AllowResponseFile",    MetaOptional() )
-    REFLECT( m_ForceResponseFile,   "ForceResponseFile",    MetaOptional() )
     REFLECT( m_VS2012EnumBugFix,    "VS2012EnumBugFix",     MetaOptional() )
     REFLECT( m_ClangRewriteIncludes, "ClangRewriteIncludes", MetaOptional() )
-    REFLECT( m_ClangGCCUpdateXLanguageArg, "ClangGCCUpdateXLanguageArg",  MetaOptional() )
-    REFLECT( m_ClangFixupUnity_Disable, "ClangFixupUnity_Disable", MetaOptional() )
     REFLECT( m_ExecutableRootPath,  "ExecutableRootPath",   MetaOptional() + MetaPath() )
     REFLECT( m_SimpleDistributionMode,  "SimpleDistributionMode",   MetaOptional() )
     REFLECT( m_CompilerFamilyString,"CompilerFamily",       MetaOptional() )
     REFLECT_ARRAY( m_Environment,   "Environment",          MetaOptional() )
     REFLECT( m_UseLightCache,       "UseLightCache_Experimental", MetaOptional() )
-    REFLECT( m_UseRelativePaths,    "UseRelativePaths_Experimental", MetaOptional() )
-    REFLECT( m_SourceMapping,       "SourceMapping_Experimental", MetaOptional() )
 
     // Internal
     REFLECT( m_CompilerFamilyEnum,  "CompilerFamilyEnum",   MetaHidden() )
@@ -45,24 +39,19 @@ REFLECT_END( CompilerNode )
 CompilerNode::CompilerNode()
     : Node( AString::GetEmpty(), Node::COMPILER_NODE, Node::FLAG_NONE )
     , m_AllowDistribution( true )
-    , m_AllowResponseFile( false )
-    , m_ForceResponseFile( false )
     , m_VS2012EnumBugFix( false )
     , m_ClangRewriteIncludes( true )
-    , m_ClangGCCUpdateXLanguageArg( false )
-    , m_ClangFixupUnity_Disable( false )
     , m_CompilerFamilyString( "auto" )
     , m_CompilerFamilyEnum( static_cast< uint8_t >( CUSTOM ) )
     , m_SimpleDistributionMode( false )
     , m_UseLightCache( false )
-    , m_UseRelativePaths( false )
     , m_EnvironmentString( nullptr )
 {
 }
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool CompilerNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool CompilerNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .Executable
     Dependencies compilerExeFile( 1, false );
@@ -154,7 +143,7 @@ CompilerNode::CompilerNode()
 
 // InitializeCompilerFamily
 //------------------------------------------------------------------------------
-bool CompilerNode::InitializeCompilerFamily( const BFFToken * iter, const Function * function )
+bool CompilerNode::InitializeCompilerFamily( const BFFIterator & iter, const Function * function )
 {
     // Handle auto-detect
     if ( m_CompilerFamilyString.EqualsI( "auto" ) )
@@ -184,17 +173,11 @@ bool CompilerNode::InitializeCompilerFamily( const BFFToken * iter, const Functi
              compiler.EndsWithI( "clang++" ) ||
              compiler.EndsWithI( "clang.exe" ) ||
              compiler.EndsWithI( "clang.cmd" ) ||
-             compiler.EndsWithI( "clang" ) )
-        {
-            m_CompilerFamilyEnum = CLANG;
-            return true;
-        }
-
-        // Clang in "cl mode" (MSVC compatibility)
-        if ( compiler.EndsWithI( "clang-cl.exe" ) ||
+             compiler.EndsWithI( "clang" ) ||
+             compiler.EndsWithI( "clang-cl.exe" ) ||
              compiler.EndsWithI( "clang-cl" ) )
         {
-            m_CompilerFamilyEnum = CLANG_CL;
+            m_CompilerFamilyEnum = CLANG;
             return true;
         }
 
@@ -270,14 +253,6 @@ bool CompilerNode::InitializeCompilerFamily( const BFFToken * iter, const Functi
             return true;
         }
 
-        // C# compiler
-        if ( compiler.EndsWithI( "csc.exe" ) ||
-             compiler.EndsWithI( "csc" ) )
-        {
-            m_CompilerFamilyEnum = CSHARP;
-            return true;
-        }
-
         // Auto-detect failed
         Error::Error_1500_CompilerDetectionFailed( iter, function, compiler );
         return false;
@@ -304,11 +279,6 @@ bool CompilerNode::InitializeCompilerFamily( const BFFToken * iter, const Functi
         m_CompilerFamilyEnum = GCC;
         return true;
     }
-    if ( m_CompilerFamilyString.EqualsI( "clang-cl" ) )
-    {
-        m_CompilerFamilyEnum = CLANG_CL;
-        return true;
-    }    
     if ( m_CompilerFamilyString.EqualsI( "snc" ) )
     {
         m_CompilerFamilyEnum = SNC;
@@ -342,11 +312,6 @@ bool CompilerNode::InitializeCompilerFamily( const BFFToken * iter, const Functi
     if ( m_CompilerFamilyString.EqualsI( "orbis-wave-psslc" ) )
     {
         m_CompilerFamilyEnum = ORBIS_WAVE_PSSLC;
-        return true;
-    }
-    if ( m_CompilerFamilyString.EqualsI( "csharp" ) )
-    {
-        m_CompilerFamilyEnum = CSHARP;
         return true;
     }
 

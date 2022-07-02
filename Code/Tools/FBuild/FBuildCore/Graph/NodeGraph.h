@@ -4,7 +4,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/BFF/BFFFileExists.h"
 #include "Tools/FBuild/FBuildCore/Helpers/SLNGenerator.h"
 #include "Tools/FBuild/FBuildCore/Helpers/VSProjectGenerator.h"
 
@@ -29,7 +28,6 @@ class FileNode;
 class IOStream;
 class LibraryNode;
 class LinkerNode;
-class ListDependenciesNode;
 class Node;
 class ObjectListNode;
 class ObjectNode;
@@ -39,10 +37,8 @@ class RemoveDirNode;
 class SettingsNode;
 class SLNNode;
 class TestNode;
-class TextFileNode;
 class UnityNode;
 class VCXProjectNode;
-class VSProjectExternalNode;
 class XCodeProjectNode;
 
 // NodeGraphHeader
@@ -59,7 +55,7 @@ public:
     }
     inline ~NodeGraphHeader() = default;
 
-    enum : uint8_t { NODE_GRAPH_CURRENT_VERSION = 161 };
+    enum : uint8_t { NODE_GRAPH_CURRENT_VERSION = 132 };
 
     bool IsValid() const
     {
@@ -87,7 +83,6 @@ public:
     {
         MISSING_OR_INCOMPATIBLE,
         LOAD_ERROR,
-        LOAD_ERROR_MOVED,
         OK_BFF_NEEDS_REPARSING,
         OK
     };
@@ -96,7 +91,6 @@ public:
     LoadResult Load( IOStream & stream, const char * nodeGraphDBFile );
     void Save( IOStream & stream, const char * nodeGraphDBFile ) const;
     void SerializeToText( const Dependencies & dependencies, AString & outBuffer ) const;
-    void SerializeToDotFormat( const Dependencies & deps, const bool fullGraph, AString & outBuffer ) const;
 
     // access existing nodes
     Node * FindNode( const AString & nodeName ) const;
@@ -123,14 +117,11 @@ public:
     CSNode * CreateCSNode( const AString & csAssemblyName );
     TestNode * CreateTestNode( const AString & testOutput );
     CompilerNode * CreateCompilerNode( const AString & name );
-    VSProjectBaseNode * CreateVCXProjectNode( const AString & name );
-    VSProjectBaseNode * CreateVSProjectExternalNode( const AString& name );
+    VCXProjectNode * CreateVCXProjectNode( const AString & name );
     SLNNode * CreateSLNNode( const AString & name );
     ObjectListNode * CreateObjectListNode( const AString & listName );
     XCodeProjectNode * CreateXCodeProjectNode( const AString & name );
     SettingsNode * CreateSettingsNode( const AString & name );
-    ListDependenciesNode* CreateListDependenciesNode( const AString& name );
-    TextFileNode * CreateTextFileNode( const AString & name );
 
     void DoBuildPass( Node * nodeToBuild );
 
@@ -139,6 +130,11 @@ public:
     #if defined( ASSERTS_ENABLED )
         static bool IsCleanPath( const AString & path );
     #endif
+
+    // as BFF files are encountered during parsing, we track them
+    void AddUsedFile( const AString & fileName, uint64_t timeStamp, uint64_t dataHash );
+    bool IsOneUseFile( const AString & fileName ) const;
+    void SetCurrentFileAsOneUse();
 
     static void UpdateBuildStatus( const Node * node,
                                    uint32_t & nodesBuiltTime,
@@ -159,11 +155,6 @@ private:
                                           uint32_t & nodesBuiltTime,
                                           uint32_t & totalNodeTime );
 
-    static bool CheckForCyclicDependencies( const Node * node );
-    static bool CheckForCyclicDependenciesRecurse( const Node * node, Array< const Node * > & dependencyStack );
-    static bool CheckForCyclicDependenciesRecurse( const Dependencies & dependencies,
-                                                   Array< const Node * > & dependencyStack );
-
     Node * FindNodeInternal( const AString & fullPath ) const;
 
     struct NodeWithDistance
@@ -176,11 +167,7 @@ private:
     void FindNearestNodesInternal( const AString & fullPath, Array< NodeWithDistance > & nodes, const uint32_t maxDistance = 5 ) const;
 
     struct UsedFile;
-    bool ReadHeaderAndUsedFiles( IOStream & nodeGraphStream,
-                                 const char* nodeGraphDBFile,
-                                 Array< UsedFile > & files,
-                                 bool & compatibleDB,
-                                 bool & movedDB ) const;
+    bool ReadHeaderAndUsedFiles( IOStream & nodeGraphStream, const char* nodeGraphDBFile, Array< UsedFile > & files, bool & compatibleDB ) const;
     uint32_t GetLibEnvVarHash() const;
 
     // load/save helpers
@@ -189,18 +176,6 @@ private:
     bool LoadNode( IOStream & stream );
     static void SerializeToText( Node * node, uint32_t depth, AString & outBuffer );
     static void SerializeToText( const char * title, const Dependencies & dependencies, uint32_t depth, AString & outBuffer );
-    static void SerializeToDot( Node * node,
-                                const bool fullGraph,
-                                AString & outBuffer );
-    static void SerializeToDot( const char * dependencyType,
-                                const char * style,
-                                const Node * node,
-                                const Dependencies & dependencies,
-                                const bool fullGraph,
-                                AString & outBuffer );
-    static void SerializeToDot( const Dependencies & dependencies,
-                                const bool fullGraph,
-                                AString & outBuffer );
 
     // DB Migration
     void Migrate( const NodeGraph & oldNodeGraph );
@@ -221,10 +196,11 @@ private:
     // each file used in the generation of the node graph is tracked
     struct UsedFile
     {
-        explicit UsedFile( const AString & fileName, uint64_t timeStamp, uint64_t dataHash ) : m_FileName( fileName ), m_TimeStamp( timeStamp ), m_DataHash( dataHash ) {}
+        explicit UsedFile( const AString & fileName, uint64_t timeStamp, uint64_t dataHash ) : m_FileName( fileName ), m_TimeStamp( timeStamp ), m_DataHash( dataHash ) , m_Once( false ) {}
         AString     m_FileName;
         uint64_t    m_TimeStamp;
         uint64_t    m_DataHash;
+        bool        m_Once;
     };
     Array< UsedFile > m_UsedFiles;
 

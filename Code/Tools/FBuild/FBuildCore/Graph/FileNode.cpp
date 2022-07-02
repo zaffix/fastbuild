@@ -8,16 +8,17 @@
 #include "Tools/FBuild/FBuildCore/FLog.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 
-// Core
+#include "Core/Containers/AutoPtr.h"
 #include "Core/FileIO/FileIO.h"
+#include "Core/FileIO/FileStream.h"
 #include "Core/Strings/AStackString.h"
 
 #include <string.h> // for strstr
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-FileNode::FileNode( const AString & fileName, uint8_t controlFlags )
-    : Node( fileName, Node::FILE_NODE, controlFlags )
+FileNode::FileNode( const AString & fileName, uint32_t controlFlags )
+: Node( fileName, Node::FILE_NODE, controlFlags )
 {
     ASSERT( fileName.EndsWith( "\\" ) == false );
     #if defined( __WINDOWS__ )
@@ -30,7 +31,7 @@ FileNode::FileNode( const AString & fileName, uint8_t controlFlags )
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool FileNode::Initialize( NodeGraph & /*nodeGraph*/, const BFFToken * /*funcStartIter*/, const Function * /*function*/ )
+/*virtual*/ bool FileNode::Initialize( NodeGraph & /*nodeGraph*/, const BFFIterator & /*funcStartIter*/, const Function * /*function*/ )
 {
     ASSERT( false ); // Should never get here
     return false;
@@ -42,7 +43,7 @@ FileNode::~FileNode() = default;
 
 // DoBuild
 //------------------------------------------------------------------------------
-/*virtual*/ Node::BuildResult FileNode::DoBuild( Job * /*job*/ )
+/*virtual*/ Node::BuildResult FileNode::DoBuild( Job * UNUSED( job ) )
 {
     // NOTE: Not calling RecordStampFromBuiltFile as this is not a built file
     m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
@@ -52,72 +53,56 @@ FileNode::~FileNode() = default;
 
 // HandleWarningsMSVC
 //------------------------------------------------------------------------------
-void FileNode::HandleWarningsMSVC( Job * job, const AString & name, const AString & data )
+void FileNode::HandleWarningsMSVC( Job * job, const AString & name, const char * data, uint32_t dataSize )
 {
-    constexpr const char * msvcWarningString = ": warning ";  // string is ok even in non-English
-    return HandleWarnings( job, name, data, msvcWarningString );
-}
-
-// HandleWarningsClangCl
-//------------------------------------------------------------------------------
-void FileNode::HandleWarningsClangCl( Job * job, const AString & name, const AString & data )
-{
-    constexpr const char * clangWarningString = " warning:";
-    return HandleWarnings( job, name, data, clangWarningString );
-}
-
-// HandleWarnings
-//------------------------------------------------------------------------------
-void FileNode::HandleWarnings( Job * job, const AString & name, const AString & data, const char * warningString )
-{
-    if ( data.IsEmpty() )
-    {
-        return;
-    }
-
-    // Are there any warnings?
-    if ( data.Find( warningString ) )
-    {
-        const bool treatAsWarnings = true;
-        DumpOutput( job, name, data, treatAsWarnings );
-    }
-}
-
-// HandleWarningsClangGCC
-//------------------------------------------------------------------------------
-void FileNode::HandleWarningsClangGCC( Job * job, const AString & name, const AString & data )
-{
-    if ( data.IsEmpty() )
+    if ( ( data == nullptr ) || ( dataSize == 0 ) )
     {
         return;
     }
 
     // Are there any warnings? (string is ok even in non-English)
-    if ( data.Find( "warning: " ) )
+    if ( strstr( data, ": warning " ) )
     {
         const bool treatAsWarnings = true;
-        DumpOutput( job, name, data, treatAsWarnings );
+        DumpOutput( job, data, dataSize, name, treatAsWarnings );
+    }
+}
+
+// HandleWarningsClangGCC
+//------------------------------------------------------------------------------
+void FileNode::HandleWarningsClangGCC( Job * job, const AString & name, const char * data, uint32_t dataSize )
+{
+    if ( ( data == nullptr ) || ( dataSize == 0 ) )
+    {
+        return;
+    }
+
+    // Are there any warnings? (string is ok even in non-English)
+    if ( strstr( data, "warning: " ) )
+    {
+        const bool treatAsWarnings = true;
+        DumpOutput( job, data, dataSize, name, treatAsWarnings );
     }
 }
 
 // DumpOutput
 //------------------------------------------------------------------------------
-void FileNode::DumpOutput( Job * job, const AString & name, const AString & data, bool treatAsWarnings )
+void FileNode::DumpOutput( Job * job, const char * data, uint32_t dataSize, const AString & name, bool treatAsWarnings )
 {
-    if ( data.IsEmpty() == false )
+    if ( ( data != nullptr ) && ( dataSize > 0 ) )
     {
         Array< AString > exclusions( 2, false );
-        exclusions.EmplaceBack( "Note: including file:" );
-        exclusions.EmplaceBack( "#line" );
+        exclusions.Append( AString( "Note: including file:" ) );
+        exclusions.Append( AString( "#line" ) );
 
         AStackString<> msg;
         msg.Format( "%s: %s\n", treatAsWarnings ? "WARNING" : "PROBLEM", name.Get() );
 
-        AString finalBuffer( data.GetLength() + msg.GetLength() );
-        finalBuffer += msg;
-        finalBuffer += data;
+        AutoPtr< char > mem( (char *)ALLOC( dataSize + msg.GetLength() ) );
+        memcpy( mem.Get(), msg.Get(), msg.GetLength() );
+        memcpy( mem.Get() + msg.GetLength(), data, dataSize );
 
-        Node::DumpOutput( job, finalBuffer, &exclusions );
+        Node::DumpOutput( job, mem.Get(), dataSize + msg.GetLength(), &exclusions );
     }
 }
 

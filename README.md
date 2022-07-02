@@ -13,7 +13,7 @@ be found here: http://fastbuild.org
 
 | Branch | Purpose |
 | :----- | :----- |
-| main   | Stable branch containing snapshot of latest release |
+| master | Stable branch containing snapshot of latest release |
 | dev    | Development branch for integration of pull requests |
 
 ## Contribution Guidelines

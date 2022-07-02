@@ -6,7 +6,7 @@
 #include "ToolManifest.h"
 
 // Core
-#include "Core/Containers/UniquePtr.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/Env/Env.h"
 #include "Core/FileIO/ConstMemoryStream.h"
 #include "Core/FileIO/FileIO.h"
@@ -175,7 +175,7 @@ void ToolManifest::Initialize( const AString & mainExecutableRoot, const Depende
     m_Files.SetCapacity( dependencies.GetSize() );
     for ( const Dependency & dep : dependencies )
     {
-        m_Files.EmplaceBack( dep.GetNode()->GetName(), (uint64_t)0, (uint32_t)0, (uint32_t)0 );
+        m_Files.Append( ToolManifestFile( dep.GetNode()->GetName(), 0, 0, 0 ) );
     }
 }
 
@@ -296,7 +296,7 @@ void ToolManifest::DeserializeFromRemote( IOStream & ms )
         ms.Read( timeStamp );
         ms.Read( hash );
         ms.Read( uncompressedContentSize );
-        m_Files.EmplaceBack( name, timeStamp, hash, uncompressedContentSize );
+        m_Files.Append( ToolManifestFile( name, timeStamp, hash, uncompressedContentSize ) );
     }
 
     ASSERT( m_CustomEnvironmentVariables.IsEmpty() );
@@ -318,16 +318,8 @@ void ToolManifest::DeserializeFromRemote( IOStream & ms )
         AStackString<> localFile;
         GetRemoteFilePath( (uint32_t)i, localFile );
 
-        // Set modification time to now
-        //  - On OSX (and possibly some Linux variants) this will prevent
-        //    periodic deletion of files.
-        //  - On Windows we lock files to prevent deletion, but setting the
-        //    writable time for some additional usage visibility is nice
-        // After this, we do it periodically in TouchFiles
-        FileIO::SetFileLastWriteTimeToNow( localFile );
-
         // is this file already present?
-        UniquePtr< FileStream, DeleteDeletor > fileStream( FNEW( FileStream ) );
+        AutoPtr< FileStream, DeleteDeletor > fileStream( FNEW( FileStream ) );
         FileStream & f = *( fileStream.Get() );
         if ( f.Open( localFile.Get() ) == false )
         {
@@ -337,12 +329,12 @@ void ToolManifest::DeserializeFromRemote( IOStream & ms )
         {
             continue; // file is not complete
         }
-        UniquePtr< char > mem( (char *)ALLOC( (size_t)f.GetFileSize() ) );
+        AutoPtr< char > mem( (char *)ALLOC( (size_t)f.GetFileSize() ) );
         if ( f.Read( mem.Get(), (size_t)f.GetFileSize() ) != f.GetFileSize() )
         {
             continue; // problem reading file
         }
-        if ( xxHash::Calc32( mem.Get(), (size_t)f.GetFileSize() ) != m_Files[ i ].GetHash() )
+        if( xxHash::Calc32( mem.Get(), (size_t)f.GetFileSize() ) != m_Files[ i ].GetHash() )
         {
             continue; // file contents unexpected
         }
@@ -477,7 +469,7 @@ void ToolManifest::CancelSynchronizingFiles()
     bool atLeastOneFileCancelled = false;
 
     // is completely synchronized?
-    const ToolManifestFile * const end = m_Files.End();
+    ToolManifestFile * const end = m_Files.End();
     for ( ToolManifestFile * it = m_Files.Begin(); it != end; ++it )
     {
         if ( it->GetSyncState() == ToolManifestFile::SYNCHRONIZING )
@@ -547,12 +539,12 @@ bool ToolManifest::ReceiveFileData( uint32_t fileId, const void * data, size_t &
     ASSERT( f.GetSyncState() == ToolManifestFile::SYNCHRONIZING );
 
     // do decompression
-    if ( Compressor::IsValidData( data, dataSize ) == false )
+    Compressor c;
+    if ( c.IsValidData( data, dataSize ) == false )
     {
         FLOG_WARN( "Invalid data received for fileId %u", fileId );
         return false;
     }
-    Compressor c;
     VERIFY( c.Decompress( data ) );
     const void * uncompressedData = c.GetResult();
     const size_t uncompressedDataSize = c.GetResultSize();
@@ -586,7 +578,7 @@ bool ToolManifest::ReceiveFileData( uint32_t fileId, const void * data, size_t &
     #endif
 
     // open read-only
-    UniquePtr< FileStream, DeleteDeletor > fileStream( FNEW( FileStream ) );
+    AutoPtr< FileStream, DeleteDeletor > fileStream( FNEW( FileStream ) );
     if ( fileStream.Get()->Open( fileName.Get(), FileStream::READ_ONLY ) == false )
     {
         return false; // FAILED
@@ -618,7 +610,7 @@ bool ToolManifest::ReceiveFileData( uint32_t fileId, const void * data, size_t &
 {
     if ( otherFile.BeginsWithI( root ) )
     {
-        // file is in sub dir on fbuild client machine, so store with same relative location
+        // file is in sub dir on master machine, so store with same relative location
         otherFileRelativePath = ( otherFile.Get() + root.GetLength() );
     }
     else
@@ -628,24 +620,6 @@ bool ToolManifest::ReceiveFileData( uint32_t fileId, const void * data, size_t &
         otherFileRelativePath = ( lastSlash ? lastSlash + 1 : otherFile.Get() );
     }
 }
-
-// TouchFiles
-//------------------------------------------------------------------------------
-#if defined( __OSX__ ) || defined( __LINUX__ )
-    void ToolManifest::TouchFiles() const
-    {
-        const size_t numFiles = m_Files.GetSize();
-        for ( size_t fileId = 0; fileId < numFiles; ++fileId )
-        {
-            // Get path to file
-            AStackString<> fileName;
-            GetRemoteFilePath( fileId, fileName );
-        
-            // Make modification time now
-            FileIO::SetFileLastWriteTimeToNow( fileName );
-        }
-    }
-#endif
 
 // GetRemoteFilePath
 //------------------------------------------------------------------------------
@@ -687,7 +661,7 @@ bool ToolManifestFile::LoadFile( void * & uncompressedContent, uint32_t & uncomp
         return false;
     }
     uncompressedContentSize = (uint32_t)fs.GetFileSize();
-    UniquePtr< void > mem( ALLOC( uncompressedContentSize ) );
+    AutoPtr< void > mem( ALLOC( uncompressedContentSize ) );
     if ( fs.Read( mem.Get(), uncompressedContentSize ) != uncompressedContentSize )
     {
         FLOG_ERROR( "Error: reading file '%s' in Compiler ToolManifest\n", m_Name.Get() );

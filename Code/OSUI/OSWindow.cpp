@@ -3,10 +3,8 @@
 
 // Includes
 //------------------------------------------------------------------------------
+#include "OSDropDown.h"
 #include "OSWindow.h"
-
-// OSUI
-#include "OSUI/OSDropDown.h"
 
 #include "Core/Env/Assert.h"
 #include "Core/Strings/AStackString.h"
@@ -19,7 +17,7 @@
 // Defines
 //------------------------------------------------------------------------------
 #if defined( __WINDOWS__ )
-    #define IDI_MAIN_ICON 101
+    #define IDI_MAIN_ICON                   101
 #endif
 
 // OSX Functions
@@ -31,7 +29,6 @@
     void WindowOSX_MessageLoop();
     void WindowOSX_SetTitle( OSWindow * owner, const char * title );
     void WindowOSX_SetMinimized( bool minimized );
-    void WindowOSX_StopMessageLoop();
 #endif
 
 // WindowWndProc
@@ -63,10 +60,6 @@
                         }
                         break;
                     }
-                    default:
-                    {
-                        break; // Ignore
-                    }
                 }
                 break;
             }
@@ -90,7 +83,7 @@
             }
             case WM_COMMAND:
             {
-                if ( HIWORD(wParam) == CBN_SELCHANGE )
+                if( HIWORD(wParam) == CBN_SELCHANGE )
                 {
                     OSDropDown * dropDown = (OSDropDown *)window->GetChildFromHandle((void *)lParam);
                     window->OnDropDownSelectionChanged( dropDown );
@@ -109,7 +102,6 @@
             default:
             {
                 // nothing...  fall through
-                break;
             }
         }
 
@@ -119,12 +111,12 @@
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-OSWindow::OSWindow( void * hInstance )
-    : m_Handle( nullptr )
+OSWindow::OSWindow( void * hInstance ) :
     #if defined( __WINDOWS__ )
-        , m_HInstance( hInstance )
+        m_Handle( nullptr ),
+        m_HInstance( hInstance ),
     #endif
-    , m_ChildWidgets( 0, true )
+    m_ChildWidgets( 0, true )
 {
     #if defined( __WINDOWS__ )
         // Obtain the executable HINSTANCE if not explictily provided
@@ -171,12 +163,12 @@ void OSWindow::Init( int32_t x, int32_t y, uint32_t w, uint32_t h )
         wc.style            = 0;
         wc.lpfnWndProc      = WindowWndProc;
         wc.cbClsExtra       = 0;
-        wc.cbWndExtra       = sizeof(void *); // For GWLP_USERDATA
+        wc.cbWndExtra       = sizeof(void*); // For GWLP_USERDATA
         wc.hInstance        = (HINSTANCE)m_HInstance;
-        wc.hIcon            = (HICON)LoadIcon( (HINSTANCE)m_HInstance, MAKEINTRESOURCE( IDI_MAIN_ICON ) );
-        wc.hCursor          = LoadCursor( nullptr, IDC_ARROW );
-        wc.hbrBackground    = (HBRUSH)( COLOR_WINDOW );
-        wc.lpszMenuName     = nullptr;
+        wc.hIcon            = (HICON)LoadIcon( (HINSTANCE)m_HInstance, MAKEINTRESOURCE(IDI_MAIN_ICON) );
+        wc.hCursor          = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground    = (HBRUSH)(COLOR_WINDOW);
+        wc.lpszMenuName     = NULL;
         wc.lpszClassName    = uniqueWindowClass.Get();
         wc.hIconSm          = wc.hIcon;
         VERIFY( RegisterClassEx( &wc ) );
@@ -196,8 +188,8 @@ void OSWindow::Init( int32_t x, int32_t y, uint32_t w, uint32_t h )
         // Set user data
         SetWindowLongPtr( (HWND)m_Handle, GWLP_USERDATA, (LONG_PTR)this );
         // User data doesn't take effect until you call SetWindowPos
-        VERIFY( SetWindowPos( (HWND)m_Handle, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE ) );
-        ASSERT( this == (void *)GetWindowLongPtr( (HWND)m_Handle, GWLP_USERDATA ) );
+        VERIFY( SetWindowPos( (HWND)m_Handle, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE ) );
+        ASSERT( this == (void*)GetWindowLongPtr( (HWND)m_Handle, GWLP_USERDATA ) );
     #elif defined( __OSX__ )
         m_Handle = WindowOSX_Create( this, x, y, w, h );
     #else
@@ -247,7 +239,7 @@ void OSWindow::SetMinimized( bool minimized )
 
 // GetPrimaryScreenWidth
 //------------------------------------------------------------------------------
-/*static*/ uint32_t OSWindow::GetPrimaryScreenWidth()
+/*sttaic*/ uint32_t OSWindow::GetPrimaryScreenWidth()
 {
     #if defined( __WINDOWS__ )
         return (uint32_t)GetSystemMetrics( SM_CXSCREEN );
@@ -258,48 +250,14 @@ void OSWindow::SetMinimized( bool minimized )
     #endif
 }
 
-// StartMessagePump
+// PumpMessages
 //------------------------------------------------------------------------------
-void OSWindow::StartMessagePump()
+void OSWindow::PumpMessages()
 {
     #if defined( __WINDOWS__ )
-        for ( ;; )
-        {
-            // Wait for a messsage
-            MSG msg;
-            const BOOL bRet = GetMessage( &msg, nullptr, 0, 0 );
-
-            // According to MSDN, this "boolean" can contain -1 on error. It seems
-            // an error could only occur due to a program bug (like passing an invalid
-            // handle) and not during any normal operation.
-            // See: https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmessage
-            ASSERT( bRet != -1 ); (void)bRet;
-
-            // Check for our custom "Stop" message
-            if ( msg.message == OSUI_WM_STOPMSGPUMP )
-            {
-                break;
-            }
-
-            // Allow our message pump to do the work, whether it's WM_QUIT (0 bRet) or not (non-zero bRet)
-            TranslateMessage( &msg );
-            DispatchMessage( &msg ); 
-        }
+        // TODO:B Move Windows message loop here
     #elif defined( __OSX__ )
-        // This call blocks until messaged by StopMessagePump
         WindowOSX_MessageLoop();
-    #endif
-}
-
-// StopMessagePump
-//------------------------------------------------------------------------------
-void OSWindow::StopMessagePump()
-{
-    // Signal to StartMessagePump that is should exit
-    #if defined( __WINDOWS__ )
-        PostMessage( (HWND)m_Handle, OSUI_WM_STOPMSGPUMP, 0, 0 );
-    #elif defined( __OSX__ )
-        WindowOSX_StopMessageLoop();
     #endif
 }
 

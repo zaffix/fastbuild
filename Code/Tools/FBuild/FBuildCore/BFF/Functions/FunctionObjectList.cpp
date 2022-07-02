@@ -48,7 +48,7 @@ FunctionObjectList::FunctionObjectList()
 
 // CheckCompilerOptions
 //------------------------------------------------------------------------------
-bool FunctionObjectList::CheckCompilerOptions( const BFFToken * iter, const AString & compilerOptions, const ObjectNode::CompilerFlags objFlags ) const
+bool FunctionObjectList::CheckCompilerOptions( const BFFIterator & iter, const AString & compilerOptions, const uint32_t objFlags ) const
 {
     bool hasInputToken = false;
     bool hasOutputToken = false;
@@ -68,7 +68,7 @@ bool FunctionObjectList::CheckCompilerOptions( const BFFToken * iter, const AStr
         }
         else
         {
-            if ( objFlags.IsMSVC() || objFlags.IsClangCl() )
+            if ( objFlags & ObjectNode::FLAG_MSVC )
             {
                 if ( ( token == "/c" ) || ( token == "-c" ) )
                 {
@@ -97,7 +97,7 @@ bool FunctionObjectList::CheckCompilerOptions( const BFFToken * iter, const AStr
     }
 
     // check /c or -c
-    if ( objFlags.IsMSVC() || objFlags.IsClangCl() )
+    if ( objFlags & ObjectNode::FLAG_MSVC )
     {
         if ( hasCompileToken == false )
         {
@@ -105,7 +105,7 @@ bool FunctionObjectList::CheckCompilerOptions( const BFFToken * iter, const AStr
             return false;
         }
     }
-    else if ( objFlags.IsSNC() || objFlags.IsGCC() || objFlags.IsVBCC() )
+    else if ( objFlags & ( ObjectNode::FLAG_SNC | ObjectNode::FLAG_GCC | ObjectNode::FLAG_CLANG | ObjectNode::FLAG_VBCC ) )
     {
         if ( hasCompileToken == false )
         {
@@ -117,13 +117,14 @@ bool FunctionObjectList::CheckCompilerOptions( const BFFToken * iter, const AStr
     return true;
 }
 
-// CheckMSVCPCHFlags_Create
+// CheckMSVCPCHFlags
 //------------------------------------------------------------------------------
-bool FunctionObjectList::CheckMSVCPCHFlags_Create( const BFFToken * iter,
-                                                   const AString & pchOptions,
-                                                   const AString & pchOutputFile,
-                                                   const char * compilerOutputExtension,
-                                                   AString & pchObjectName ) const
+bool FunctionObjectList::CheckMSVCPCHFlags( const BFFIterator & iter,
+                                            const AString & compilerOptions,
+                                            const AString & pchOptions,
+                                            const AString & pchOutputFile,
+                                            const char * compilerOutputExtension,
+                                            AString & pchObjectName ) const
 {
     // sanity check arguments
     bool foundYcInPCHOptions = false;
@@ -177,16 +178,6 @@ bool FunctionObjectList::CheckMSVCPCHFlags_Create( const BFFToken * iter,
         return false;
     }
 
-    return true;
-}
-
-
-// CheckMSVCPCHFlags_Use
-//------------------------------------------------------------------------------
-bool FunctionObjectList::CheckMSVCPCHFlags_Use( const BFFToken * iter,
-                                                const AString & compilerOptions,
-                                                ObjectNode::CompilerFlags objFlags ) const
-{
     // Check Compiler Options
     bool foundYuInCompilerOptions = false;
     bool foundFpInCompilerOptions = false;
@@ -217,22 +208,12 @@ bool FunctionObjectList::CheckMSVCPCHFlags_Use( const BFFToken * iter,
         return false;
     }
 
-    if ( objFlags.IsCreatingPCH() )
-    {
-        // must not specify use of precompiled header (must use the PCH specific options)
-        Error::Error_1303_PCHCreateOptionOnlyAllowedOnPCH( iter, this, "Yc", "CompilerOptions" );
-        return false;
-    }
-
     return true;
 }
 
 // GetExtraOutputPaths
 //------------------------------------------------------------------------------
-void FunctionObjectList::GetExtraOutputPaths( const AString & args, 
-                                              AString & outPDBPath, 
-                                              AString & outASMPath,
-                                              AString & outSourceDependenciesPath )
+void FunctionObjectList::GetExtraOutputPaths( const AString & args, AString & pdbPath, AString & asmPath )
 {
     // split to individual tokens
     Array< AString > tokens;
@@ -243,19 +224,13 @@ void FunctionObjectList::GetExtraOutputPaths( const AString & args,
     {
         if ( ObjectNode::IsStartOfCompilerArg_MSVC( *it, "Fd" ) )
         {
-            GetExtraOutputPath( it, end, "Fd", outPDBPath );
+            GetExtraOutputPath( it, end, "Fd", pdbPath );
             continue;
         }
 
         if ( ObjectNode::IsStartOfCompilerArg_MSVC( *it, "Fa" ) )
         {
-            GetExtraOutputPath( it, end, "Fa", outASMPath );
-            continue;
-        }
-
-        if ( ObjectNode::IsStartOfCompilerArg_MSVC( *it, "sourceDependencies" ) )
-        {
-            GetExtraOutputPath( it, end, "sourceDependencies", outSourceDependenciesPath );
+            GetExtraOutputPath( it, end, "Fa", asmPath );
             continue;
         }
     }

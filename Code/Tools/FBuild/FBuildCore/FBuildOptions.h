@@ -1,4 +1,4 @@
-// FBuildOptions.h - Command line options processing
+// FBuild.cpp - The main FBuild interface class
 //------------------------------------------------------------------------------
 #pragma once
 
@@ -13,7 +13,7 @@
 
 // FBuildOptions
 //------------------------------------------------------------------------------
-class FBuildOptions
+struct FBuildOptions
 {
 public:
     FBuildOptions();
@@ -31,8 +31,7 @@ public:
         WRAPPER_MODE_NONE,
         WRAPPER_MODE_MAIN_PROCESS,
         WRAPPER_MODE_INTERMEDIATE_PROCESS,
-        WRAPPER_MODE_FINAL_PROCESS,
-        WRAPPER_MODE_WINDOWS_SUBSYSTEM_FOR_LINUX,
+        WRAPPER_MODE_FINAL_PROCESS
     };
 
     void SetWorkingDir( const AString & path );
@@ -44,7 +43,6 @@ public:
     AString     m_ProgramName;
     AString     m_Args; // Stored copy of args
     WrapperMode m_WrapperMode                       = WRAPPER_MODE_NONE;
-    AString     m_WSLPath;
 
     // Targets
     Array< AString > m_Targets;
@@ -52,13 +50,11 @@ public:
     // Build Behaviour
     bool        m_ForceCleanBuild                   = false;
     bool        m_StopOnFirstError                  = true;
-    bool        m_FastCancel                        = true;
+    bool        m_FastCancel                        = false;
     bool        m_WaitMode                          = false;
     bool        m_DisplayTargetList                 = false;
     bool        m_ShowHiddenTargets                 = false;
     bool        m_DisplayDependencyDB               = false;
-    bool        m_GenerateDotGraph                  = false;
-    bool        m_GenerateDotGraphFull              = false;
     bool        m_GenerateCompilationDatabase       = false;
     bool        m_NoUnity                           = false;
 
@@ -68,7 +64,6 @@ public:
     bool        m_CacheInfo                         = false;
     bool        m_CacheVerbose                      = false;
     uint32_t    m_CacheTrim                         = 0;
-    int16_t     m_CacheCompressionLevel             = -1; // See Compresssor.h
 
     // Distributed Compilation
     bool        m_AllowDistributed                  = false;
@@ -78,26 +73,20 @@ public:
     uint16_t    m_DistributionPort                  = Protocol::PROTOCOL_PORT;
 
     // General Output
-    bool        m_ShowVerbose                       = false;
-    bool        m_ShowBuildReason                   = false;
-    bool        m_ShowCommandSummary                = true;
+    bool        m_ShowInfo                          = false;
     bool        m_ShowCommandLines                  = false;
-    bool        m_ShowCommandOutput                 = false;
+    bool        m_ShowBuildCommands                 = true;
     bool        m_ShowErrors                        = true;
     bool        m_ShowProgress                      = false;
     bool        m_ShowSummary                       = false;
-    bool        m_ShowTotalTimeTaken                = true;
-    bool        m_ShowPrintStatements               = true;
     bool        m_NoSummaryOnError                  = false;
     bool        m_GenerateReport                    = false;
     bool        m_EnableMonitor                     = false;
-    bool        m_Profile                           = false;
 
     // DB loading/saving
     bool        m_SaveDBOnCompletion                = false;
     bool        m_FixupErrorPaths                   = false;
     bool        m_ForceDBMigration_Debug            = false; // Force migration even if bff has not changed (for tests)
-    bool        m_ContinueAfterDBMove               = false;
 
     uint32_t    m_NumWorkerThreads                  = 0; // True default detected in constructor
     AString     m_ConfigFile;

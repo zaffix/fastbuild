@@ -11,7 +11,6 @@
 #include "Tools/FBuild/FBuildCore/FLog.h"
 #include "Tools/FBuild/FBuildCore/Graph/Node.h"
 #include "Tools/FBuild/FBuildCore/Graph/ObjectNode.h"
-#include "Tools/FBuild/FBuildCore/Helpers/BuildProfiler.h"
 
 #include "Core/Time/Timer.h"
 #include "Core/FileIO/FileIO.h"
@@ -118,18 +117,13 @@ JobQueue::JobQueue( uint32_t numWorkerThreads ) :
     m_NumLocalJobsActive( 0 ),
     m_DistributableJobs_Available( 1024, true ),
     m_DistributableJobs_InProgress( 1024, true ),
-    #if defined( __WINDOWS__ )
-        m_MainThreadSemaphore( 1 ), // On Windows, take advantage of signalling limit
-    #else
-        m_MainThreadSemaphore(),
-    #endif
     m_CompletedJobs( 1024, true ),
     m_CompletedJobsFailed( 1024, true ),
     m_CompletedJobs2( 1024, true ),
     m_CompletedJobsFailed2( 1024, true ),
     m_Workers( numWorkerThreads, false )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     WorkerThread::InitTmpDir();
 
@@ -137,7 +131,7 @@ JobQueue::JobQueue( uint32_t numWorkerThreads ) :
     {
         // identify each worker with an id starting from 1
         // (the "main" thread is considered 0)
-        const uint16_t threadIndex = static_cast<uint16_t>( i + 1 );
+        uint32_t threadIndex = ( i + 1 );
         WorkerThread * wt = FNEW( WorkerThread( threadIndex ) );
         wt->Init();
         m_Workers.Append( wt );
@@ -148,8 +142,6 @@ JobQueue::JobQueue( uint32_t numWorkerThreads ) :
 //------------------------------------------------------------------------------
 JobQueue::~JobQueue()
 {
-    PROFILE_FUNCTION;
-
     // signal all workers to stop - ok if this has already been done
     SignalStopWorkers();
 
@@ -247,6 +239,20 @@ void JobQueue::AddJobToBatch( Node * node )
     // mark as building
     node->SetState( Node::BUILDING );
 
+    // trivial build tasks are processed immediately and returned
+    if ( node->GetControlFlags() & Node::FLAG_TRIVIAL_BUILD )
+    {
+        Job localJob( node );
+        Node::BuildResult result = DoBuild( &localJob );
+        switch( result )
+        {
+            case Node::NODE_RESULT_FAILED:  node->SetState( Node::FAILED ); break;
+            case Node::NODE_RESULT_OK:      node->SetState( Node::UP_TO_DATE ); break;
+            default:                        ASSERT( false ); break;
+        }
+        return;
+    }
+
     m_LocalJobs_Staging.Append( node );
 }
 
@@ -259,7 +265,6 @@ void JobQueue::FlushJobBatch()
         return;
     }
 
-    // Make the jobs available
     m_LocalJobs_Available.QueueJobs( m_LocalJobs_Staging );
     m_WorkerThreadSemaphore.Signal( (uint32_t)m_LocalJobs_Staging.GetSize() );
     m_LocalJobs_Staging.Clear();
@@ -276,14 +281,6 @@ void JobQueue::QueueDistributableJob( Job * job )
         MutexHolder m( m_DistributedJobsMutex );
 
         m_DistributableJobs_Available.Append( job );
-
-        // Jobs that have been preprocsssed and are ready to be distributed are
-        // added here. The order of completion of preprocessing doesn't correlate
-        // with the remining cost of compilation (and is often the reverse).
-        // We re-sort the distributable jobs when adding new ones to ensure the
-        // most expensive ones are at the end of the list and will be distributed first.
-        JobCostSorter sorter;
-        m_DistributableJobs_Available.Sort( sorter );
 
         job->SetDistributionState( Job::DIST_AVAILABLE );
     }
@@ -305,10 +302,9 @@ Job * JobQueue::GetDistributableJobToProcess( bool remote )
         return nullptr;
     }
 
-    // Jobs are sorted from least to most expensive, so we consume
-    // from the end of the list.
-    Job * job = m_DistributableJobs_Available.Top();
-    m_DistributableJobs_Available.Pop();
+    // building jobs in the order they are queued
+    Job * job = m_DistributableJobs_Available[ 0 ];
+    m_DistributableJobs_Available.PopFront();
 
     ASSERT( job->GetDistributionState() == Job::DIST_AVAILABLE );
 
@@ -349,43 +345,16 @@ Job * JobQueue::GetDistributableJobToRace()
 
 // OnReturnRemoteJob
 //------------------------------------------------------------------------------
-Job * JobQueue::OnReturnRemoteJob( uint32_t jobId,
-                                   bool systemError,
-                                   bool & outRaceLost,
-                                   bool & outRaceWon,
-                                   const Node * & outNode,
-                                   uint32_t & outJobSystemErrorCount )
+Job * JobQueue::OnReturnRemoteJob( uint32_t jobId )
 {
     MutexHolder m( m_DistributedJobsMutex );
-    Job * * jobIt = m_DistributableJobs_InProgress.FindDeref( jobId );
+    auto jobIt = m_DistributableJobs_InProgress.FindDeref( jobId );
     if ( jobIt )
     {
         Job * job = *jobIt;
 
-        // Give caller access to the node and other job info since we
-        // may not return the job
-        outNode = job->GetNode();
-        outRaceLost = false; // Will be updated below if needed
-        outRaceWon = false; // Will be updated below if needed
-        outJobSystemErrorCount = job->GetSystemErrorCount(); // Will be updated below if needed
-
         // What state is the job in?
         const Job::DistributionState distState = job->GetDistributionState();
-
-        // Handle system error special cases
-        if ( systemError )
-        {
-            // Increment system error count
-            job->OnSystemError();
-            ++outJobSystemErrorCount;
-
-            // If we're racing, then switch to local only mode
-            if ( distState == Job::DIST_RACING )
-            {
-                job->SetDistributionState( Job::DIST_BUILDING_LOCALLY );
-                return nullptr;
-            }
-        }
 
         // Standard remote build?
         if ( distState == Job::DIST_BUILDING_REMOTELY )
@@ -397,7 +366,6 @@ Job * JobQueue::OnReturnRemoteJob( uint32_t jobId,
         // Did a local race complete this already?
         if ( distState == Job::DIST_RACE_WON_LOCALLY )
         {
-            outRaceLost = true;
             m_DistributableJobs_InProgress.Erase( jobIt );
             FDELETE job;
             return nullptr;
@@ -406,9 +374,9 @@ Job * JobQueue::OnReturnRemoteJob( uint32_t jobId,
         // Are we still locally racing?
         if ( distState == Job::DIST_RACING )
         {
-            // Remote job win, so try to cancel the local job
-            job->CancelDueToRemoteRaceWin(); // NOTE: Must be after SetDistributionState so cancellation knows remote race was won
-            outRaceWon = true;
+            // Try to cancel the local job
+            job->Cancel();
+            job->SetDistributionState( Job::DIST_RACE_WON_REMOTELY_CANCEL_LOCAL );
 
             // Wait for cancellation
             {
@@ -496,7 +464,7 @@ void JobQueue::ReturnUnfinishedDistributableJob( Job * job )
 //------------------------------------------------------------------------------
 void JobQueue::FinalizeCompletedJobs( NodeGraph & nodeGraph )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     {
         MutexHolder m( m_CompletedJobsMutex );
@@ -539,21 +507,8 @@ void JobQueue::FinalizeCompletedJobs( NodeGraph & nodeGraph )
                 continue;
             }
 
-            // If racing and the remote job is returned, it attempts a cancellation.
-            // While waiting for cancellation, it's possible for the local job to have completed
-            // and be ready to be finialized in this function. If we get here in that state,
-            // the remote job is waiting on cancellation and we can unblock it and free the job.
-            if ( distState == Job::DIST_RACE_WON_REMOTELY_CANCEL_LOCAL )
-            {
-                // Remove the job from the in progress queue. The remote result
-                // which is waiting on the cancellation will know the job has been handled.
-                VERIFY( m_DistributableJobs_InProgress.FindAndErase( job ) );
-                FDELETE job;
-                continue;
-            }
-
             // Local race, won locally
-            ASSERTM( distState == Job::DIST_RACING, "got: %u", distState );
+            ASSERT( distState == Job::DIST_RACING );
             job->SetDistributionState( Job::DIST_RACE_WON_LOCALLY );
 
             // We can't delete the job yet, because it's still in use by the remote
@@ -604,7 +559,7 @@ void JobQueue::FinalizeCompletedJobs( NodeGraph & nodeGraph )
 //------------------------------------------------------------------------------
 void JobQueue::MainThreadWait( uint32_t maxWaitMS )
 {
-    PROFILE_SECTION( "MainThreadWait" );
+    PROFILE_SECTION( "MainThreadWait" )
     m_MainThreadSemaphore.Wait( maxWaitMS );
 }
 
@@ -728,7 +683,6 @@ void JobQueue::FinishedProcessingJob( Job * job, bool success, bool wasARemoteJo
          ( node->GetType() == Node::LIBRARY_NODE ) ||
          ( node->GetType() == Node::DLL_NODE ) ||
          ( node->GetType() == Node::CS_NODE ) ||
-         ( node->GetType() == Node::EXEC_NODE ) ||
          ( node->GetType() == Node::TEST_NODE ) )
     {
         nodeRelevantToMonitorLog = true;
@@ -759,13 +713,11 @@ void JobQueue::FinishedProcessingJob( Job * job, bool success, bool wasARemoteJo
             const char * profilingTag = node->GetTypeName();
             if ( node->GetType() == Node::OBJECT_NODE )
             {
-                const ObjectNode * on = (ObjectNode *)node;
+                ObjectNode * on = (ObjectNode *)node;
                 profilingTag = on->IsCreatingPCH() ? "PCH" : on->IsUsingPCH() ? "Obj (+PCH)" : profilingTag;
             }
             PROFILE_SECTION( profilingTag );
         #endif
-
-        BuildProfilerScope profileScope( *job, WorkerThread::GetThreadIndex(), node->GetTypeName() );
         result = node->DoBuild( job );
     }
 
@@ -777,7 +729,7 @@ void JobQueue::FinishedProcessingJob( Job * job, bool success, bool wasARemoteJo
         // does not represent how long it takes to create this resource)
         node->SetLastBuildTime( timeTakenMS );
         node->SetStatFlag( Node::STATS_BUILT );
-        FLOG_VERBOSE( "-Build: %u ms\t%s", timeTakenMS, node->GetName().Get() );
+        FLOG_INFO( "-Build: %u ms\t%s", timeTakenMS, node->GetName().Get() );
     }
 
     if ( result == Node::NODE_RESULT_FAILED )

@@ -22,6 +22,9 @@
 
 // Core
 #include "Core/Env/ErrorFormat.h"
+#include "Core/FileIO/FileIO.h"
+#include "Core/FileIO/FileStream.h"
+#include "Core/FileIO/PathUtils.h"
 #include "Core/Process/Process.h"
 #include "Core/Strings/AStackString.h"
 
@@ -30,11 +33,8 @@
 REFLECT_NODE_BEGIN( LibraryNode, ObjectListNode, MetaName( "LibrarianOutput" ) + MetaFile() )
     REFLECT( m_Librarian,                       "Librarian",                    MetaFile() )
     REFLECT( m_LibrarianOptions,                "LibrarianOptions",             MetaNone() )
-    REFLECT( m_LibrarianType,                   "LibrarianType",                MetaOptional() )
     REFLECT( m_LibrarianOutput,                 "LibrarianOutput",              MetaFile() )
     REFLECT_ARRAY( m_LibrarianAdditionalInputs, "LibrarianAdditionalInputs",    MetaOptional() + MetaFile() + MetaAllowNonFile( Node::OBJECT_LIST_NODE ) )
-    REFLECT( m_LibrarianAllowResponseFile,      "LibrarianAllowResponseFile",   MetaOptional() )
-    REFLECT( m_LibrarianForceResponseFile,      "LibrarianForceResponseFile",   MetaOptional() )   
 
     REFLECT( m_NumLibrarianAdditionalInputs,    "NumLibrarianAdditionalInputs", MetaHidden() )
     REFLECT( m_LibrarianFlags,                  "LibrarianFlags",               MetaHidden() )
@@ -45,9 +45,6 @@ REFLECT_END( LibraryNode )
 //------------------------------------------------------------------------------
 LibraryNode::LibraryNode()
 : ObjectListNode()
-, m_LibrarianType( "auto" )
-, m_LibrarianAllowResponseFile( false )
-, m_LibrarianForceResponseFile( false )
 {
     m_Type = LIBRARY_NODE;
     m_LastBuildTimeMs = 10000; // TODO:C Reduce this when dynamic deps are saved
@@ -55,7 +52,7 @@ LibraryNode::LibraryNode()
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool LibraryNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool LibraryNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .Librarian
     Dependencies librarian;
@@ -100,7 +97,7 @@ LibraryNode::LibraryNode()
     m_StaticDependencies.Append( librarianAdditionalInputs );
     // m_ObjectListInputEndIndex // NOTE: Deliberately not added to m_ObjectListInputEndIndex, since we don't want to try and compile these things
 
-    m_LibrarianFlags = DetermineFlags( m_LibrarianType, m_Librarian, m_LibrarianOptions );
+    m_LibrarianFlags = DetermineFlags( m_Librarian, m_LibrarianOptions );
 
     return true;
 }
@@ -135,7 +132,7 @@ LibraryNode::~LibraryNode()
     const size_t endIndex = m_StaticDependencies.GetSize();
     for ( size_t i=startIndex; i<endIndex; ++i )
     {
-        m_DynamicDependencies.EmplaceBack( m_StaticDependencies[ i ].GetNode() );
+        m_DynamicDependencies.Append( Dependency( m_StaticDependencies[ i ].GetNode() ) );
     }
     return true;
 }
@@ -173,7 +170,7 @@ LibraryNode::~LibraryNode()
 
     // spawn the process
     Process p( FBuild::Get().GetAbortBuildPointer() );
-    bool spawnOK = p.Spawn( m_Librarian.Get(),
+    bool spawnOK = p.Spawn( GetLibrarian()->GetName().Get(),
                             fullArgs.GetFinalArgs().Get(),
                             workingDir,
                             environment );
@@ -190,9 +187,11 @@ LibraryNode::~LibraryNode()
     }
 
     // capture all of the stdout and stderr
-    AString memOut;
-    AString memErr;
-    p.ReadAllData( memOut, memErr );
+    AutoPtr< char > memOut;
+    AutoPtr< char > memErr;
+    uint32_t memOutSize = 0;
+    uint32_t memErrSize = 0;
+    p.ReadAllData( memOut, &memOutSize, memErr, &memErrSize );
 
     // Get result
     int result = p.WaitForExit();
@@ -204,12 +203,12 @@ LibraryNode::~LibraryNode()
     // did the executable fail?
     if ( result != 0 )
     {
-        if ( memOut.IsEmpty() == false )
+        if ( memOut.Get() )
         {
             job->ErrorPreformatted( memOut.Get() );
         }
 
-        if ( memErr.IsEmpty() == false )
+        if ( memErr.Get() )
         {
             job->ErrorPreformatted( memErr.Get() );
         }
@@ -223,7 +222,7 @@ LibraryNode::~LibraryNode()
         // (since compilation will fail anyway, and the output will be shown)
         if ( GetFlag( LIB_FLAG_LIB ) && !GetFlag( LIB_FLAG_WARNINGS_AS_ERRORS_MSVC ) )
         {
-            FileNode::HandleWarningsMSVC( job, GetName(), memOut );
+            FileNode::HandleWarningsMSVC( job, GetName(), memOut.Get(), memOutSize );
         }
     }
 
@@ -301,7 +300,7 @@ bool LibraryNode::BuildArgs( Args & fullArgs ) const
     }
 
     // Handle all the special needs of args
-    if ( fullArgs.Finalize( m_Librarian, GetName(), GetResponseFileMode() ) == false )
+    if ( fullArgs.Finalize( GetLibrarian()->GetName(), GetName(), CanUseResponseFile() ) == false )
     {
         return false; // Finalize will have emitted an error
     }
@@ -311,68 +310,24 @@ bool LibraryNode::BuildArgs( Args & fullArgs ) const
 
 // DetermineFlags
 //------------------------------------------------------------------------------
-/*static*/ uint32_t LibraryNode::DetermineFlags( const AString & librarianType, const AString & librarianName, const AString & args )
+/*static*/ uint32_t LibraryNode::DetermineFlags( const AString & librarianName, const AString & args )
 {
     uint32_t flags = 0;
+    if ( librarianName.EndsWithI("lib.exe") ||
+        librarianName.EndsWithI("lib") ||
+        librarianName.EndsWithI("link.exe") ||
+        librarianName.EndsWithI("link"))
+    {
+        flags |= LIB_FLAG_LIB;
 
-    if ( librarianType.IsEmpty() || ( librarianType == "auto" ) )
-    {
-        // Detect based upon librarian executable name
-        if ( librarianName.EndsWithI( "lib.exe" ) ||
-             librarianName.EndsWithI( "lib" ) ||
-             librarianName.EndsWithI( "link.exe" ) ||
-             librarianName.EndsWithI( "link" ) )
-        {
-            flags |= LIB_FLAG_LIB;
-        }
-        else if ( librarianName.EndsWithI( "ar.exe" ) ||
-                  librarianName.EndsWithI( "ar" ) )
-        {
-            if ( librarianName.FindI( "orbis-ar" ) )
-            {
-                flags |= LIB_FLAG_ORBIS_AR;
-            }
-            else
-            {
-                flags |= LIB_FLAG_AR;
-            }
-        }
-        else if ( librarianName.EndsWithI( "\\ax.exe" ) ||
-                  librarianName.EndsWithI( "\\ax" ) )
-        {
-            flags |= LIB_FLAG_GREENHILLS_AX;
-        }
-    }
-    else
-    {
-        if ( librarianType == "msvc" )
-        {
-            flags |= LIB_FLAG_LIB;
-        }
-        else if ( librarianType == "ar" )
-        {
-            flags |= LIB_FLAG_AR;
-        }
-        else if ( librarianType == "ar-orbis" )
-        {
-            flags |= LIB_FLAG_ORBIS_AR;
-        }
-        else if ( librarianType == "greenhills-ax" )
-        {
-            flags |= LIB_FLAG_GREENHILLS_AX;
-        }
-    }
-
-    if ( flags & LIB_FLAG_LIB )
-    {
         // Parse args for some other flags
         Array< AString > tokens;
         args.Tokenize( tokens );
 
-        const AString* const end = tokens.End();
+        const AString * const end = tokens.End();
         for ( const AString * it = tokens.Begin(); it != end; ++it )
         {
-            const AString& token = *it;
+            const AString & token = *it;
             if ( LinkerNode::IsLinkerArg_MSVC( token, "WX" ) )
             {
                 flags |= LIB_FLAG_WARNINGS_AS_ERRORS_MSVC;
@@ -380,7 +335,23 @@ bool LibraryNode::BuildArgs( Args & fullArgs ) const
             }
         }
     }
-
+    else if ( librarianName.EndsWithI("ar.exe") ||
+         librarianName.EndsWithI("ar") )
+    {
+        if ( librarianName.FindI( "orbis-ar" ) )
+        {
+            flags |= LIB_FLAG_ORBIS_AR;
+        }
+        else
+        {
+            flags |= LIB_FLAG_AR;
+        }
+    }
+    else if ( librarianName.EndsWithI( "\\ax.exe" ) ||
+              librarianName.EndsWithI( "\\ax" ) )
+    {
+        flags |= LIB_FLAG_GREENHILLS_AX;
+    }
     return flags;
 }
 
@@ -389,54 +360,37 @@ bool LibraryNode::BuildArgs( Args & fullArgs ) const
 void LibraryNode::EmitCompilationMessage( const Args & fullArgs ) const
 {
     AStackString<> output;
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        output += "Lib: ";
-        output += GetName();
-        output += '\n';
-    }
-    if ( FBuild::Get().GetOptions().m_ShowCommandLines )
+    output += "Lib: ";
+    output += GetName();
+    output += '\n';
+    if ( FLog::ShowInfo() || FBuild::Get().GetOptions().m_ShowCommandLines )
     {
         output += m_Librarian;
         output += ' ';
         output += fullArgs.GetRawArgs();
         output += '\n';
     }
-    FLOG_OUTPUT( output );
+    FLOG_BUILD_DIRECT( output.Get() );
 }
 
-// GetResponseFileMode
+// GetLibrarian
 //------------------------------------------------------------------------------
-ArgsResponseFileMode LibraryNode::GetResponseFileMode() const
+FileNode * LibraryNode::GetLibrarian() const
 {
-    // User forces response files to be used, regardless of args length?
-    if ( m_LibrarianForceResponseFile )
-    {
-        return ArgsResponseFileMode::ALWAYS;
-    }
+    // Librarian is always at index 0
+    return m_StaticDependencies[ 0 ].GetNode()->CastTo< FileNode >();
+}
 
-    // User explicitly says we can use response file if needed?
-    if ( m_LibrarianAllowResponseFile )
-    {
-        return ArgsResponseFileMode::IF_NEEDED;
-    }
-
-    // Detect a librarian that supports response file args?
+// CanUseResponseFile
+//------------------------------------------------------------------------------
+bool LibraryNode::CanUseResponseFile() const
+{
     #if defined( __WINDOWS__ )
         // Generally only windows applications support response files (to overcome Windows command line limits)
-        // TODO:C This logic is Windows only as that's how it was originally implemented. It seems we
-        // probably want this for other platforms as well though.
-        if ( GetFlag( LIB_FLAG_LIB ) ||
-             GetFlag( LIB_FLAG_AR ) ||
-             GetFlag( LIB_FLAG_ORBIS_AR ) ||
-             GetFlag( LIB_FLAG_GREENHILLS_AX ) )
-        {
-            return ArgsResponseFileMode::IF_NEEDED;
-        }
+        return ( GetFlag( LIB_FLAG_LIB ) || GetFlag( LIB_FLAG_AR ) || GetFlag( LIB_FLAG_ORBIS_AR ) || GetFlag( LIB_FLAG_GREENHILLS_AX ) );
+    #else
+        return false;
     #endif
-
-    // Cannot use response files
-    return ArgsResponseFileMode::NEVER;
 }
 
 //------------------------------------------------------------------------------

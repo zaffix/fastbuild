@@ -19,7 +19,6 @@ class OSWindow;
 #if defined( __WINDOWS__ )
     // Windows user messages
     #define OSUI_WM_TRAYICON ( WM_USER + 1 )
-    #define OSUI_WM_STOPMSGPUMP ( WM_USER + 2 )
 #endif
 
 // OSWindow
@@ -47,8 +46,7 @@ public:
 
     static uint32_t GetPrimaryScreenWidth();
 
-    void StartMessagePump();    // Call from main thread. Blocks.
-    void StopMessagePump();     // Call from work thread once it will no longer accesses UI. StartMessagePump will then return.
+    void PumpMessages();
 
     // Events for derived classes to respond to
     virtual bool OnMinimize();

@@ -12,6 +12,7 @@
 
 #include "Core/Env/ErrorFormat.h"
 #include "Core/FileIO/FileIO.h"
+#include "Core/FileIO/FileStream.h"
 #include "Core/Strings/AStackString.h"
 
 // REFLECTION
@@ -25,14 +26,14 @@ REFLECT_END( CopyFileNode )
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
 CopyFileNode::CopyFileNode()
-    : FileNode( AString::GetEmpty(), Node::FLAG_NONE )
+: FileNode( AString::GetEmpty(), Node::FLAG_NONE )
 {
     m_Type = Node::COPY_FILE_NODE;
 }
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool CopyFileNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool CopyFileNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .PreBuildDependencies
     if ( !InitializePreBuildDependencies( nodeGraph, iter, function, m_PreBuildDependencyNames ) )
@@ -55,7 +56,7 @@ CopyFileNode::~CopyFileNode() = default;
 
 // DoBuild
 //------------------------------------------------------------------------------
-/*virtual*/ Node::BuildResult CopyFileNode::DoBuild( Job * /*job*/ )
+/*virtual*/ Node::BuildResult CopyFileNode::DoBuild( Job * UNUSED( job ) )
 {
     EmitCopyMessage();
 
@@ -73,7 +74,7 @@ CopyFileNode::~CopyFileNode() = default;
     }
 
     // Ensure the dst file's "last modified" time is equal to or newer than the source
-    const uint64_t srcStamp = FileIO::GetFileLastWriteTime( GetSourceNode()->GetName() );
+    uint64_t srcStamp = FileIO::GetFileLastWriteTime( GetSourceNode()->GetName() );
     uint64_t dstStamp = FileIO::GetFileLastWriteTime( m_Name );
     ASSERT( srcStamp && dstStamp );
     if ( dstStamp < srcStamp )
@@ -98,15 +99,12 @@ void CopyFileNode::EmitCopyMessage() const
     // we combine everything into one string to ensure it is contiguous in
     // the output
     AStackString<> output;
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        output += "Copy: ";
-        output += m_StaticDependencies[ 0 ].GetNode()->GetName();
-        output += " -> ";
-        output += GetName();
-        output += '\n';
-    }
-    FLOG_OUTPUT( output );
+    output += "Copy: ";
+    output += m_StaticDependencies[ 0 ].GetNode()->GetName();
+    output += " -> ";
+    output += GetName();
+    output += '\n';
+    FLOG_BUILD_DIRECT( output.Get() );
 }
 
 //------------------------------------------------------------------------------

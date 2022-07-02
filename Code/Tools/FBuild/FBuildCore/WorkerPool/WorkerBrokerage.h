@@ -18,34 +18,22 @@ public:
     WorkerBrokerage();
     ~WorkerBrokerage();
 
-    inline const Array<AString> & GetBrokerageRoots() const { return m_BrokerageRoots; }
-    inline const AString & GetBrokerageRootPaths() const { return m_BrokerageRootPaths; }
-    inline const AString & GetHostName() const { return m_HostName; }
+    inline const AString & GetBrokerageRoot() const { return m_BrokerageRoot; }
 
     // client interface
     void FindWorkers( Array< AString > & workerList );
 
     // server interface
     void SetAvailability( bool available );
-
-    void SetIPAsHostName( const AString & ipAsHostName );
 private:
-    void InitBrokerage();
-    void UpdateBrokerageFilePath();
+    void Init();
 
-    Array<AString>      m_BrokerageRoots;
-    AString             m_BrokerageRootPaths;
+    AString             m_BrokerageRoot;
     bool                m_Availability;
-    bool                m_BrokerageInitialized;
+    bool                m_Initialized;
     AString             m_HostName;
-    AString             m_DomainName;
-    AString             m_IPAddress;
-    AString             m_IPAsHostName;
     AString             m_BrokerageFilePath;
     Timer               m_TimerLastUpdate;      // Throttle network access
-    Timer               m_TimerLastIPUpdate;    // Throttle dns access
-    uint64_t            m_SettingsWriteTime;    // FileTime of settings time when last changed
-    Timer               m_TimerLastCleanBroker;
 };
 
 //------------------------------------------------------------------------------

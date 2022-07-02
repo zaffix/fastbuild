@@ -22,7 +22,7 @@
 /*static*/ uint32_t WorkerThreadRemote::s_NumCPUsToUse( 999 ); // no limit
 
 //------------------------------------------------------------------------------
-WorkerThreadRemote::WorkerThreadRemote( uint16_t threadIndex )
+WorkerThreadRemote::WorkerThreadRemote( uint32_t threadIndex )
 : WorkerThread( threadIndex )
 , m_CurrentJob( nullptr )
 {
@@ -42,7 +42,7 @@ WorkerThreadRemote::~WorkerThreadRemote()
     {
         if ( IsEnabled() == false )
         {
-            JobQueueRemote::Get().WorkerThreadSleep();
+            Thread::Sleep( 500 );
             continue; // after sleep, check exit condition
         }
 
@@ -63,9 +63,6 @@ WorkerThreadRemote::~WorkerThreadRemote()
                 MutexHolder mh( m_CurrentJobMutex );
                 m_CurrentJob = nullptr;
             }
-
-            // Take note of the thread used to build the job
-            job->SetRemoteThreadIndex( WorkerThread::GetThreadIndex() );
 
             JobQueueRemote::Get().FinishedProcessingJob( job, ( result != Node::NODE_RESULT_FAILED ) );
 
@@ -116,7 +113,7 @@ void WorkerThreadRemote::GetStatus( AString & hostName, AString & status, bool &
 bool WorkerThreadRemote::IsEnabled() const
 {
     // determine 1-base CPU identifier
-    const uint16_t cpuId = ( m_ThreadIndex - 1000u ); // remote thread index starts at 1001
+    uint32_t cpuId = ( m_ThreadIndex - 1000 ); // remote thread index starts at 1001
 
     // enabled?
     return ( cpuId <= s_NumCPUsToUse );

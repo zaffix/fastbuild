@@ -47,17 +47,12 @@ typedef signed int          int32_t;
 #define KILOBYTE (1024)
 #define MEGABYTE (1024 * 1024)
 
+#define UNUSED( x )
+
 #if defined( __WINDOWS__ )
     #define THREAD_LOCAL __declspec( thread )
 #else
     #define THREAD_LOCAL __thread
-#endif
-
-// [[nodiscard]]
-#if defined( _MSC_VER ) && ( _MSC_VER < 1910 ) // Not supported prior to VS2017
-    #define NODISCARD
-#else
-    #define NODISCARD [[nodiscard]]
 #endif
 
 #if defined( __WINDOWS__ )
@@ -89,7 +84,7 @@ typedef signed int          int32_t;
 #endif
 #ifndef uintptr_t
     #if defined( __LINUX__ )
-        #if defined( __X64__ ) || defined( __ARM64__ )
+        #ifdef __x86_64__
             typedef uint64_t    uintptr_t;
         #else
             typedef uint32_t    uintptr_t;
@@ -101,6 +96,16 @@ typedef signed int          int32_t;
         typedef uint64_t    size_t;
     #elif defined( WIN32 )
         typedef uint32_t    size_t;
+    #endif
+#endif
+
+#if defined( __WINDOWS__ ) && defined( __clang__ )
+    #define __w64
+#endif
+
+#if !defined( __WINDOWS__ ) || defined( __clang__ )
+    #ifndef nullptr
+        #define nullptr (0)
     #endif
 #endif
 
@@ -121,13 +126,9 @@ typedef signed int          int32_t;
 
 #if defined( __GNUC__ ) || defined( __clang__ ) // GCC or Clang
     #define FORMAT_STRING( fmt, args ) __attribute__((format(printf, fmt, args)))
-    #define SCAN_STRING( fmt, args ) __attribute__((format(scanf, fmt, args)))
 #else
     #define FORMAT_STRING( fmt, args )
-    #define SCAN_STRING( fmt, args )
 #endif
-
-#define ARRAY_SIZE( array ) ( sizeof( array ) / sizeof( array[0] ) )
 
 // Warning disabling
 //------------------------------------------------------------------------------

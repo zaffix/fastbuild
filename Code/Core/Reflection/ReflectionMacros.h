@@ -4,9 +4,9 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Core/Reflection/MetaData/MetaData.h"
 #include "Core/Reflection/PropertyType.h"
 #include "Core/Reflection/ReflectionInfo.h"
+#include "Core/Reflection/MetaData/MetaData.h"
 
 #include <stddef.h>
 
@@ -33,8 +33,8 @@ class ReflectionInfo;
 // HELPER
 //------------------------------------------------------------------------------
 #define CHECK_BASE_CLASS( className, baseClass ) \
-    const className * c = nullptr; \
-    const baseClass * b = static_cast< const baseClass * >( c ); (void)b;
+    className * c = nullptr; \
+    baseClass * b = static_cast< baseClass * >( c ); (void)b;
 
 #define ADD_METADATA( metaData ) \
     AddMetaData( metaData );

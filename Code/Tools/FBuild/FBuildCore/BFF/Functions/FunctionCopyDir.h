@@ -16,7 +16,6 @@ public:
 
 protected:
     virtual bool AcceptsHeader() const override;
-    virtual bool NeedsHeader() const override;
     virtual Node * CreateNode() const override;
 };
 

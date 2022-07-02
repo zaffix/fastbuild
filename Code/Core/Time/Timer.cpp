@@ -13,7 +13,6 @@
 #if defined( __APPLE__ )
     #include <mach/mach.h>
     #include <mach/mach_time.h>
-    #include <time.h>
 #endif
 #if defined( __LINUX__ )
     #include <time.h>
@@ -38,13 +37,9 @@ public:
             Timer::s_Frequency = freq.QuadPart;
         #endif
         #if defined( __APPLE__ )
-            #if defined( __ARM64__ )
-                Timer::s_Frequency = 1000000000;
-            #else
-                mach_timebase_info_data_t info;
-                mach_timebase_info( &info );
-                Timer::s_Frequency = (int64_t)( info.numer / info.denom ) * 1000000000;
-            #endif
+            mach_timebase_info_data_t info;
+            mach_timebase_info( &info );
+            Timer::s_Frequency = (int64_t)( info.numer / info.denom ) * 1000000000;
         #endif
         #if defined( __LINUX__ )
             Timer::s_Frequency = 1000000000ULL;
@@ -60,16 +55,12 @@ GlobalTimerFrequencyInitializer g_GlobalTimerFrequencyInitializer;
 int64_t Timer::GetNow()
 {
     #if defined( __WINDOWS__ )
+        ASSERT( s_Frequency );
         LARGE_INTEGER now;
         VERIFY( QueryPerformanceCounter( &now ) );
         return now.QuadPart;
     #elif defined( __APPLE__ )
-        #if defined( __ARM64__ )
-            // mach_absolute_time seems to return the wrong time on Apple Silicon
-            return (int64_t)clock_gettime_nsec_np( CLOCK_MONOTONIC );
-        #else
-            return (int64_t)mach_absolute_time();
-        #endif
+        return (int64_t)mach_absolute_time();
     #elif defined( __LINUX__ )
         timespec ts;
         VERIFY( clock_gettime( CLOCK_REALTIME, &ts ) == 0 );

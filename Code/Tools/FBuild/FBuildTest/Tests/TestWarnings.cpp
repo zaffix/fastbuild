@@ -5,9 +5,9 @@
 //------------------------------------------------------------------------------
 #include "FBuildTest.h"
 
-#include "Core/Strings/AStackString.h"
-#include "Tools/FBuild/FBuildCore/BFF/BFFParser.h"
 #include "Tools/FBuild/FBuildCore/FBuild.h"
+#include "Tools/FBuild/FBuildCore/BFF/BFFParser.h"
+#include "Core/Strings/AStackString.h"
 
 // TestWarnings
 //------------------------------------------------------------------------------
@@ -64,19 +64,13 @@ void TestWarnings::PragmaMessageWarningsAreShown() const
 //------------------------------------------------------------------------------
 void TestWarnings::ClangMacroExpansion() const
 {
-    #if defined( __WINDOWS__ )
-        // TODO:A Check if this is still relevant for newer versions of Clang
-        // The warning this test relies on has change and this test may need to
-        // be updated
-    #else
-        FBuildTestOptions options;
-        options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestWarnings/ClangMacroExpansion/fbuild.bff";
+    FBuildTestOptions options;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestWarnings/ClangMacroExpansion/fbuild.bff";
 
-        FBuild fBuild( options );
-        TEST_ASSERT( fBuild.Initialize() );
+    FBuild fBuild( options );
+    TEST_ASSERT( fBuild.Initialize() );
 
-        TEST_ASSERT( fBuild.Build( "ClangMacroExpansion" ) );
-    #endif
+    TEST_ASSERT( fBuild.Build( "ClangMacroExpansion" ) );
 }
 
 //------------------------------------------------------------------------------

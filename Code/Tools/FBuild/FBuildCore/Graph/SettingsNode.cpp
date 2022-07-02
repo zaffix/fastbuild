@@ -11,8 +11,10 @@
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 
 // Core
-#include "Core/Containers/UniquePtr.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/Env/Env.h"
+#include "Core/FileIO/FileIO.h"
+#include "Core/FileIO/FileStream.h"
 #include "Core/Strings/AStackString.h"
 
 // Defines
@@ -28,7 +30,6 @@ REFLECT_NODE_BEGIN( SettingsNode, Node, MetaNone() )
     REFLECT(        m_CachePath,                "CachePath",                MetaOptional() )
     REFLECT(        m_CachePathMountPoint,      "CachePathMountPoint",      MetaOptional() )
     REFLECT(        m_CachePluginDLL,           "CachePluginDLL",           MetaOptional() )
-    REFLECT(        m_CachePluginDLLConfig,     "CachePluginDLLConfig",     MetaOptional() )
     REFLECT_ARRAY(  m_Workers,                  "Workers",                  MetaOptional() )
     REFLECT(        m_WorkerConnectionLimit,    "WorkerConnectionLimit",    MetaOptional() )
     REFLECT(        m_DistributableJobMemoryLimitMiB, "DistributableJobMemoryLimitMiB", MetaOptional() + MetaRange( DIST_MEMORY_LIMIT_MIN, DIST_MEMORY_LIMIT_MAX ) )
@@ -50,12 +51,12 @@ SettingsNode::SettingsNode()
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool SettingsNode::Initialize( NodeGraph & /*nodeGraph*/, const BFFToken * /*iter*/, const Function * /*function*/ )
+/*virtual*/ bool SettingsNode::Initialize( NodeGraph & /*nodeGraph*/, const BFFIterator & /*iter*/, const Function * /*function*/ )
 {
     // using a cache plugin?
     if ( m_CachePluginDLL.IsEmpty() == false )
     {
-        FLOG_VERBOSE( "CachePluginDLL: '%s'", m_CachePluginDLL.Get() );
+        FLOG_INFO( "CachePluginDLL: '%s'", m_CachePluginDLL.Get() );
     }
 
     // "Environment"
@@ -109,13 +110,6 @@ const AString & SettingsNode::GetCachePluginDLL() const
     return m_CachePluginDLL;
 }
 
-// GetCachePluginDLLConfig
-//------------------------------------------------------------------------------
-const AString & SettingsNode::GetCachePluginDLLConfig() const
-{
-    return m_CachePluginDLLConfig;
-}
-
 // ProcessEnvironment
 //------------------------------------------------------------------------------
 void SettingsNode::ProcessEnvironment( const Array< AString > & envStrings ) const
@@ -131,7 +125,7 @@ void SettingsNode::ProcessEnvironment( const Array< AString > & envStrings ) con
     }
 
     // allocate space
-    UniquePtr< char > envString( (char *)ALLOC( size + 1 ) ); // +1 for extra double-null
+    AutoPtr< char > envString( (char *)ALLOC( size + 1 ) ); // +1 for extra double-null
 
     // while iterating, extract the LIB environment variable (if there is one)
     AStackString<> libEnvVar;

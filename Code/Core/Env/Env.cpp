@@ -7,12 +7,12 @@
 
 // Core
 #include "Core/Containers/Array.h"
-#include "Core/Process/Atomic.h"
 #include "Core/Strings/AStackString.h"
+#include "Core/Process/Atomic.h"
 
 #if defined( __WINDOWS__ )
     #include "Core/Env/WindowsHeader.h"
-    #include <lmcons.h>
+    #include <Lmcons.h>
     #include <stdio.h>
 #endif
 
@@ -31,8 +31,8 @@
     #include <mach-o/dyld.h>
     extern "C"
     {
-        int * _NSGetArgc( void );
-        char *** _NSGetArgv( void );
+        int *_NSGetArgc(void);
+        char ***_NSGetArgv(void);
     };
 #endif
 
@@ -47,7 +47,7 @@
         AStackString< 32 > var;
         if ( GetEnvVariable( "NUMBER_OF_PROCESSORS", var ) )
         {
-            if ( var.Scan( "%u", &numProcessors ) != 1 )
+            if ( sscanf_s( var.Get(), "%u", &numProcessors ) != 1 )
             {
                 numProcessors = 1;
             }
@@ -286,9 +286,7 @@ static bool IsStdOutRedirectedInternal()
         }
         int nChars = 0;
         PRAGMA_DISABLE_PUSH_MSVC( 4996 ) // This function or variable may be unsafe...
-        PRAGMA_DISABLE_PUSH_CLANG_WINDOWS( "-Wdeprecated-declarations" ) // 'swscanf' is deprecated: This function or variable may be unsafe...
         if ( ( swscanf( p, L"%*llx-pty%*d-to-master%n", &nChars ) == 0 ) && ( nChars > 0 ) ) // TODO:C Consider using swscanf_s
-        PRAGMA_DISABLE_POP_CLANG_WINDOWS // -Wdeprecated-declarations
         PRAGMA_DISABLE_POP_MSVC // 4996
         {
             return false; // Pipe name matches the pattern, stdout is forwarded to a terminal by Cygwin/MSYS
@@ -382,23 +380,6 @@ static bool IsStdOutRedirectedInternal()
     *mem = 0;
 
     return environmentString;
-}
-
-// ShowMsgBox
-//------------------------------------------------------------------------------
-void Env::ShowMsgBox( const char * title, const char * msg )
-{
-    #if defined( __WINDOWS__ )
-        MessageBoxA( nullptr, msg, title, MB_OK );
-    #elif defined( __APPLE__ )
-        (void)title;
-        (void)msg; // TODO:MAC Implement ShowMsgBox
-    #elif defined( __LINUX__ )
-        (void)title;
-        (void)msg; // TODO:LINUX Implement ShowMsgBox
-    #else
-        #error Unknown Platform
-    #endif
 }
 
 //------------------------------------------------------------------------------

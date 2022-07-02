@@ -9,7 +9,7 @@
 #include "Tools/FBuild/FBuildCore/FLog.h"
 
 // Core
-#include "Core/Containers/UniquePtr.h"
+#include "Core/Containers/AutoPtr.h"
 #include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/FileStream.h"
 #include "Core/FileIO/PathUtils.h"
@@ -50,14 +50,9 @@ public:
 
 // Init
 //------------------------------------------------------------------------------
-/*virtual*/ bool Cache::Init( const AString & cachePath,
-                              const AString & cachePathMountPoint,
-                              bool /*cacheRead*/,
-                              bool /*cacheWrite*/,
-                              bool /*cacheVerbose*/,
-                              const AString & /*pluginDLLConfig*/ )
+/*virtual*/ bool Cache::Init( const AString & cachePath, const AString & cachePathMountPoint )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     m_CachePath = cachePath;
     PathUtils::EnsureTrailingSlash( m_CachePath );
@@ -107,15 +102,15 @@ public:
 
     // open output cache (tmp) file
     AStackString<> fullPathTmp( fullPath );
-    fullPathTmp += ".tmp";
+    fullPathTmp+= ".tmp";
     FileStream cacheTmpFile;
-    if ( !cacheTmpFile.Open( fullPathTmp.Get(), FileStream::WRITE_ONLY ) )
+    if( !cacheTmpFile.Open( fullPathTmp.Get(), FileStream::WRITE_ONLY ) )
     {
         return false;
     }
 
     // write data
-    const bool cacheTmpWriteOk = ( cacheTmpFile.Write( data, dataSize ) == dataSize );
+    bool cacheTmpWriteOk = ( cacheTmpFile.Write( data, dataSize ) == dataSize );
     cacheTmpFile.Close();
 
     if ( !cacheTmpWriteOk )
@@ -157,7 +152,7 @@ public:
     if ( cacheFile.Open( fullPath.Get(), FileStream::READ_ONLY ) )
     {
         const size_t cacheFileSize = (size_t)cacheFile.GetFileSize();
-        UniquePtr< char > mem( (char *)ALLOC( cacheFileSize ) );
+        AutoPtr< char > mem( (char *)ALLOC( cacheFileSize ) );
         if ( cacheFile.Read( mem.Get(), cacheFileSize ) == cacheFileSize )
         {
             dataSize = cacheFileSize;
@@ -171,7 +166,7 @@ public:
 
 // FreeMemory
 //------------------------------------------------------------------------------
-/*virtual*/ void Cache::FreeMemory( void * data, size_t /*dataSize*/ )
+/*virtual*/ void Cache::FreeMemory( void * data, size_t UNUSED( dataSize ) )
 {
     FREE( data );
 }
@@ -260,7 +255,7 @@ public:
     uint32_t numDeleted = 0;
     if ( limit < totalSize )
     {
-        const Timer timer;
+        Timer timer;
         float lastProgressTime = 0.0f;
         if ( showProgress )
         {
@@ -317,7 +312,7 @@ void Cache::GetCacheFiles( bool showProgress,
 {
     // Throttle progress messages to avoid impacting performance significantly
     // (network cache is usually the bottleneck, but a local caches is not)
-    const Timer timer;
+    Timer timer;
     float lastProgressTime = 0.0f;
     if ( showProgress )
     {
@@ -331,7 +326,7 @@ void Cache::GetCacheFiles( bool showProgress,
         {
             // Get Files
             AStackString<> path;
-            path.Format( "%s%02X%c%02X%c", m_CachePath.Get(),
+            path.Format( "%s%02x%c%02x%c", m_CachePath.Get(),
                                                (uint32_t)i,
                                                NATIVE_SLASH,
                                                (uint32_t)j,

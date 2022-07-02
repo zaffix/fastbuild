@@ -1,2 +1,0 @@
-
-#include MACRO_WHICH_IS_NOT_DEFINED

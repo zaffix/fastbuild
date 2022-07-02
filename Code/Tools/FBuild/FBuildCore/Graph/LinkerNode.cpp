@@ -6,7 +6,6 @@
 #include "LinkerNode.h"
 
 #include "Tools/FBuild/FBuildCore/BFF/Functions/Function.h"
-#include "Tools/FBuild/FBuildCore/BFF/LinkerNodeFileExistsCache.h"
 #include "Tools/FBuild/FBuildCore/Error.h"
 #include "Tools/FBuild/FBuildCore/FBuild.h"
 #include "Tools/FBuild/FBuildCore/FLog.h"
@@ -34,11 +33,8 @@ REFLECT_NODE_BEGIN( LinkerNode, Node, MetaName( "LinkerOutput" ) + MetaFile() )
     REFLECT( m_Linker,                          "Linker",                       MetaFile() )
     REFLECT( m_LinkerOptions,                   "LinkerOptions",                MetaNone() )
     REFLECT( m_LinkerType,                      "LinkerType",                   MetaOptional() )
-    REFLECT( m_LinkerAllowResponseFile,         "LinkerAllowResponseFile",      MetaOptional() )
-    REFLECT( m_LinkerForceResponseFile,         "LinkerForceResponseFile",      MetaOptional() )
     REFLECT_ARRAY( m_Libraries,                 "Libraries",                    MetaFile() + MetaAllowNonFile() )
-    REFLECT_ARRAY( m_Libraries2,                "Libraries2",                   MetaFile() + MetaAllowNonFile() + MetaOptional() )
-    REFLECT_ARRAY( m_LinkerAssemblyResources,   "LinkerAssemblyResources",      MetaOptional() + MetaFile() + MetaAllowNonFile( Node::OBJECT_LIST_NODE ) )
+    REFLECT_ARRAY( m_LinkerAssemblyResources,   "LinkerAssemblyResources",      MetaOptional() + MetaFile() )
     REFLECT( m_LinkerLinkObjects,               "LinkerLinkObjects",            MetaOptional() )
     REFLECT( m_LinkerStampExe,                  "LinkerStampExe",               MetaOptional() + MetaFile() )
     REFLECT( m_LinkerStampExeArgs,              "LinkerStampExeArgs",           MetaOptional() )
@@ -46,7 +42,6 @@ REFLECT_NODE_BEGIN( LinkerNode, Node, MetaName( "LinkerOutput" ) + MetaFile() )
     REFLECT_ARRAY( m_Environment,               "Environment",                  MetaOptional() )
 
     // Internal State
-    REFLECT( m_Libraries2StartIndex,            "Libraries2StartIndex",         MetaHidden() )
     REFLECT( m_Flags,                           "Flags",                        MetaHidden() )
     REFLECT( m_AssemblyResourcesStartIndex,     "AssemblyResourcesStartIndex",  MetaHidden() )
     REFLECT( m_AssemblyResourcesNum,            "AssemblyResourcesNum",         MetaHidden() )
@@ -58,15 +53,13 @@ REFLECT_END( LinkerNode )
 LinkerNode::LinkerNode()
     : FileNode( AString::GetEmpty(), Node::FLAG_NONE )
     , m_LinkerType( "auto" )
-    , m_LinkerAllowResponseFile( false )
-    , m_LinkerForceResponseFile( false )
 {
     m_LastBuildTimeMs = 20000; // Assume link times are fairly long by default
 }
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool LinkerNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool LinkerNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .PreBuildDependencies
     if ( !InitializePreBuildDependencies( nodeGraph, iter, function, m_PreBuildDependencyNames ) )
@@ -115,14 +108,6 @@ LinkerNode::LinkerNode()
             return false; // DependOnNode will have emitted an error
         }
     }
-    Dependencies libraries2( 64, true );
-    for ( const AString & library : m_Libraries2 )
-    {
-        if ( DependOnNode( nodeGraph, iter, function, library, libraries2 ) == false )
-        {
-            return false; // DependOnNode will have emitted an error
-        }
-    }
 
     // Assembly Resources
     Dependencies assemblyResources( 32, true );
@@ -135,7 +120,7 @@ LinkerNode::LinkerNode()
     Dependencies otherLibraryNodes( 64, true );
     if ( ( m_Flags & ( LinkerNode::LINK_FLAG_MSVC | LinkerNode::LINK_FLAG_GCC | LinkerNode::LINK_FLAG_SNC | LinkerNode::LINK_FLAG_ORBIS_LD | LinkerNode::LINK_FLAG_GREENHILLS_ELXR | LinkerNode::LINK_FLAG_CODEWARRIOR_LD ) ) != 0 )
     {
-        const bool msvcStyle = GetFlag( LinkerNode::LINK_FLAG_MSVC );
+        const bool msvcStyle = ( ( m_Flags & LinkerNode::LINK_FLAG_MSVC ) == LinkerNode::LINK_FLAG_MSVC );
         if ( !GetOtherLibraries( nodeGraph, iter, function, m_LinkerOptions, otherLibraryNodes, msvcStyle ) )
         {
             return false; // will have emitted error
@@ -161,8 +146,6 @@ LinkerNode::LinkerNode()
                                       ( linkerStampExe.IsEmpty() ? 0 : 1 ) );
     m_StaticDependencies.Append( linkerExe );
     m_StaticDependencies.Append( libraries );
-    m_Libraries2StartIndex = (uint32_t)m_StaticDependencies.GetSize();
-    m_StaticDependencies.Append( libraries2 );
     m_AssemblyResourcesStartIndex = (uint32_t)m_StaticDependencies.GetSize();
     m_StaticDependencies.Append( assemblyResources );
     m_AssemblyResourcesNum = (uint32_t)assemblyResources.GetSize();
@@ -241,9 +224,11 @@ LinkerNode::~LinkerNode()
         }
 
         // capture all of the stdout and stderr
-        AString memOut;
-        AString memErr;
-        p.ReadAllData( memOut, memErr );
+        AutoPtr< char > memOut;
+        AutoPtr< char > memErr;
+        uint32_t memOutSize = 0;
+        uint32_t memErrSize = 0;
+        p.ReadAllData( memOut, &memOutSize, memErr, &memErrSize );
 
         ASSERT( !p.IsRunning() );
         // Get result
@@ -275,15 +260,6 @@ LinkerNode::~LinkerNode()
                     continue; // try again
                 }
 
-                // Did the linker encounter "fatal error LNK1201: error writing to program database"?
-                // The MSVC toolchain (as of VS2019 upto 16.7.5) occasionally emits this error. It seems there
-                // is a bug where the PDB size can grow a lot and this error will start to occur.
-                if ( result == 1201 )
-                {
-                    FLOG_WARN( "FBuild: Warning: Linker failed with (LNK1201), retrying '%s'", GetName().Get() );
-                    continue; // try again
-                }
-
                 // Did the linker have an "unexpected PDB error" (LNK1318)?
                 // Example: "fatal error LNK1318: Unexpected PDB error; CORRUPT (13)"
                 // (The linker or mspdbsrv.exe (as of VS2017) seems to have bugs which cause the PDB
@@ -296,12 +272,12 @@ LinkerNode::~LinkerNode()
                 }
             }
 
-            if ( memOut.IsEmpty() == false )
+            if ( memOut.Get() )
             {
                 job->ErrorPreformatted( memOut.Get() );
             }
 
-            if ( memErr.IsEmpty() == false )
+            if ( memErr.Get() )
             {
                 job->ErrorPreformatted( memErr.Get() );
             }
@@ -312,19 +288,11 @@ LinkerNode::~LinkerNode()
         }
         else
         {
-            if ( FBuild::Get().GetOptions().m_ShowCommandOutput )
+            // If "warnings as errors" is enabled (/WX) we don't need to check
+            // (since compilation will fail anyway, and the output will be shown)
+            if ( GetFlag( LINK_FLAG_MSVC ) && !GetFlag( LINK_FLAG_WARNINGS_AS_ERRORS_MSVC ) )
             {
-                Node::DumpOutput( job, memOut );
-                Node::DumpOutput( job, memErr );
-            }
-            else
-            {
-                // If "warnings as errors" is enabled (/WX) we don't need to check
-                // (since compilation will fail anyway, and the output will be shown)
-                if ( GetFlag( LINK_FLAG_MSVC ) && !GetFlag( LINK_FLAG_WARNINGS_AS_ERRORS_MSVC ) )
-                {
-                    HandleWarningsMSVC( job, GetName(), memOut );
-                }
+                HandleWarningsMSVC( job, GetName(), memOut.Get(), memOutSize );
             }
             break; // success!
         }
@@ -353,9 +321,11 @@ LinkerNode::~LinkerNode()
         }
 
         // capture all of the stdout and stderr
-        AString memOut;
-        AString memErr;
-        stampProcess.ReadAllData( memOut, memErr );
+        AutoPtr< char > memOut;
+        AutoPtr< char > memErr;
+        uint32_t memOutSize = 0;
+        uint32_t memErrSize = 0;
+        stampProcess.ReadAllData( memOut, &memOutSize, memErr, &memErrSize );
         ASSERT( !stampProcess.IsRunning() );
 
         // Get result
@@ -365,18 +335,11 @@ LinkerNode::~LinkerNode()
             return NODE_RESULT_FAILED;
         }
 
-        // Show output if desired
-        const bool showCommandOutput = ( result != 0 ) || 
-                                       FBuild::Get().GetOptions().m_ShowCommandOutput;
-        if ( showCommandOutput )
-        {
-            Node::DumpOutput( job, memOut );
-            Node::DumpOutput( job, memErr );
-        }
-
         // did the executable fail?
         if ( result != 0 )
         {
+            if ( memOut.Get() ) { FLOG_ERROR_DIRECT( memOut.Get() ); }
+            if ( memErr.Get() ) { FLOG_ERROR_DIRECT( memErr.Get() ); }
             FLOG_ERROR( "Failed to stamp %s. Error: %s Target: '%s' StampExe: '%s'", GetDLLOrExe(), ERROR_STR( result ), GetName().Get(), m_LinkerStampExe.Get() );
             return NODE_RESULT_FAILED;
         }
@@ -419,7 +382,7 @@ bool LinkerNode::DoPreLinkCleanup() const
     // thinks it can skip compilation (it outputs "Note: reusing persistent precompiled header %s")
     // If FASTBuild is building because we've not built before, then cleanup old files
     // to ensure VS2013/2015 /showincludes will work
-    if ( GetStatFlag( STATS_FIRST_BUILD ) )
+    if ( GetStamp() == 0 )
     {
         deleteFiles = true;
     }
@@ -447,7 +410,7 @@ bool LinkerNode::DoPreLinkCleanup() const
 //------------------------------------------------------------------------------
 bool LinkerNode::BuildArgs( Args & fullArgs ) const
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     // split into tokens
     Array< AString > tokens( 1024, true );
@@ -462,7 +425,9 @@ bool LinkerNode::BuildArgs( Args & fullArgs ) const
         const char * found = token.Find( "%1" );
         if ( found )
         {
-            GetInputFiles( token, fullArgs );
+            AStackString<> pre( token.Get(), found );
+            AStackString<> post( found + 2, token.GetEnd() );
+            GetInputFiles( fullArgs, pre, post );
             fullArgs.AddDelimiter();
             continue;
         }
@@ -532,7 +497,7 @@ bool LinkerNode::BuildArgs( Args & fullArgs ) const
     }
 
     // Handle all the special needs of args
-    if ( fullArgs.Finalize( m_Linker, GetName(), GetResponseFileMode() ) == false )
+    if ( fullArgs.Finalize( m_Linker, GetName(), CanUseResponseFile() ) == false )
     {
         return false; // Finalize will have emitted an error
     }
@@ -542,48 +507,11 @@ bool LinkerNode::BuildArgs( Args & fullArgs ) const
 
 // GetInputFiles
 //------------------------------------------------------------------------------
-void LinkerNode::GetInputFiles( const AString & token, Args & fullArgs ) const
-{
-    // Currently we support the following:
-    //  - %1[0] = .Libraries                    1 -> m_Libraries2StartIndex
-    //  - %1[1] = .Libraries2                   m_Libraries2StartIndex -> m_AssemblyResourcesStartIndex
-    //  - %1    = .Libraries & .Libraries2      1 -> m_AssemblyResourcesStartIndex
-    //
-    // TODO:C Extend this into something more flexible. Currently difficult to
-    //        do as there isn't an easy way to REFLECT an Array of Arrays
-    //
-    const char * foundA = token.Find( "%1[0]" );
-    if ( foundA )
-    {
-        AStackString<> pre( token.Get(), foundA );
-        AStackString<> post( foundA + 5, token.GetEnd() );
-        GetInputFiles( fullArgs, 1, m_Libraries2StartIndex, pre, post );
-        return;
-    }
-
-    const char * foundB = token.Find( "%1[1]" );
-    if ( foundB )
-    {
-        AStackString<> pre( token.Get(), foundB );
-        AStackString<> post( foundB + 5, token.GetEnd() );
-        GetInputFiles( fullArgs, m_Libraries2StartIndex, m_AssemblyResourcesStartIndex, pre, post );
-        return;
-    }
-
-    const char * found = token.Find( "%1" );
-    ASSERT( found );
-    AStackString<> pre( token.Get(), found );
-    AStackString<> post( found + 2, token.GetEnd() );
-    GetInputFiles( fullArgs, 1, m_AssemblyResourcesStartIndex, pre, post );
-}
-
-// GetInputFiles
-//------------------------------------------------------------------------------
-void LinkerNode::GetInputFiles( Args & fullArgs, uint32_t startIndex, uint32_t endIndex, const AString & pre, const AString & post ) const
+void LinkerNode::GetInputFiles( Args & fullArgs, const AString & pre, const AString & post ) const
 {
     // Regular inputs are after linker and before AssemblyResources
-    const Dependency * start = m_StaticDependencies.Begin() + startIndex;
-    const Dependency * end = m_StaticDependencies.Begin() + endIndex;
+    const Dependency * start = m_StaticDependencies.Begin() + 1; // Skip first item which is linker exe
+    const Dependency * end = m_StaticDependencies.Begin() + m_AssemblyResourcesStartIndex;
     for ( const Dependency * i = start; i != end; ++i )
     {
         Node * n( i->GetNode() );
@@ -601,7 +529,7 @@ void LinkerNode::GetInputFiles( Node * n, Args & fullArgs, const AString & pre, 
 
         if ( linkObjectsInsteadOfLibs )
         {
-            const LibraryNode * ln = n->CastTo< LibraryNode >();
+            LibraryNode * ln = n->CastTo< LibraryNode >();
             ln->GetInputFiles( fullArgs, pre, post, linkObjectsInsteadOfLibs );
         }
         else
@@ -616,13 +544,13 @@ void LinkerNode::GetInputFiles( Node * n, Args & fullArgs, const AString & pre, 
     {
         const bool linkObjectsInsteadOfLibs = m_LinkerLinkObjects;
 
-        const ObjectListNode * ol = n->CastTo< ObjectListNode >();
+        ObjectListNode * ol = n->CastTo< ObjectListNode >();
         ol->GetInputFiles( fullArgs, pre, post, linkObjectsInsteadOfLibs );
     }
     else if ( n->GetType() == Node::DLL_NODE )
     {
         // for a DLL, link to the import library
-        const DLLNode * dllNode = n->CastTo< DLLNode >();
+        DLLNode * dllNode = n->CastTo< DLLNode >();
         AStackString<> importLibName;
         dllNode->GetImportLibName( importLibName );
         fullArgs += pre;
@@ -631,7 +559,7 @@ void LinkerNode::GetInputFiles( Node * n, Args & fullArgs, const AString & pre, 
     }
     else if ( n->GetType() == Node::COPY_FILE_NODE )
     {
-        const CopyFileNode * copyNode = n->CastTo< CopyFileNode >();
+        CopyFileNode * copyNode = n->CastTo< CopyFileNode >();
         Node * srcNode = copyNode->GetSourceNode();
         GetInputFiles( srcNode, fullArgs, pre, post );
     }
@@ -654,18 +582,18 @@ void LinkerNode::GetAssemblyResourceFiles( Args & fullArgs, const AString & pre,
     const Dependency * end = start + m_AssemblyResourcesNum;
     for ( const Dependency * i = start; i != end; ++i )
     {
-        const Node * n( i->GetNode() );
+        Node * n( i->GetNode() );
 
         if ( n->GetType() == Node::OBJECT_LIST_NODE )
         {
-            const ObjectListNode * oln = n->CastTo< ObjectListNode >();
+            ObjectListNode * oln = n->CastTo< ObjectListNode >();
             oln->GetInputFiles( fullArgs, pre, post, false );
             continue;
         }
 
         if ( n->GetType() == Node::LIBRARY_NODE )
         {
-            const LibraryNode * ln = n->CastTo< LibraryNode >();
+            LibraryNode * ln = n->CastTo< LibraryNode >();
             ln->GetInputFiles( fullArgs, pre, post, false );
             continue;
         }
@@ -687,7 +615,7 @@ void LinkerNode::GetAssemblyResourceFiles( Args & fullArgs, const AString & pre,
     {
         // Detect based upon linker executable name
         if ( ( linkerName.EndsWithI( "link.exe" ) ) ||
-             ( linkerName.EndsWithI( "link" ) ) ) // this will also recognize lld-link
+            ( linkerName.EndsWithI( "link" ) ) )
         {
             flags |= LinkerNode::LINK_FLAG_MSVC;
         }
@@ -712,7 +640,7 @@ void LinkerNode::GetAssemblyResourceFiles( Args & fullArgs, const AString & pre,
             flags |= LinkerNode::LINK_FLAG_GREENHILLS_ELXR;
         }
         else if ( ( linkerName.EndsWithI( "mwldeppc.exe" ) ) ||
-            ( linkerName.EndsWithI( "mwldeppc" ) ) )
+            ( linkerName.EndsWithI( "mwldeppc." ) ) )
         {
             flags |= LinkerNode::LINK_FLAG_CODEWARRIOR_LD;
         }
@@ -858,13 +786,8 @@ void LinkerNode::GetAssemblyResourceFiles( Args & fullArgs, const AString & pre,
         const AString * const end = tokens.End();
         for ( const AString * it=tokens.Begin(); it!=end; ++it )
         {
-            AStackString<256> token( *it );
-            token.ToLower();
-
-            if ( ( token == "-shared" ) ||
-                 ( token == "-dynamiclib" ) ||
-                 ( token == "--oformat=prx" ) ||
-                 ( token == "/dll" ) || // For clang-cl
+            const AString & token = *it;
+            if ( ( token == "-shared" ) || ( token == "-dynamiclib" ) || ( token == "--oformat=prx" ) ||
                  ( token.BeginsWith( "-Wl" ) && token.Find( "--oformat=prx" ) ) )
             {
                 flags |= LinkerNode::LINK_FLAG_DLL;
@@ -950,21 +873,18 @@ void LinkerNode::GetAssemblyResourceFiles( Args & fullArgs, const AString & pre,
 void LinkerNode::EmitCompilationMessage( const Args & fullArgs ) const
 {
     AStackString<> output;
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        output += GetDLLOrExe();
-        output += ": ";
-        output += GetName();
-        output += '\n';
-    }
-    if ( FBuild::Get().GetOptions().m_ShowCommandLines )
+    output += GetDLLOrExe();
+    output += ": ";
+    output += GetName();
+    output += '\n';
+    if ( FLog::ShowInfo() || FBuild::Get().GetOptions().m_ShowCommandLines )
     {
         output += m_Linker;
         output += ' ';
         output += fullArgs.GetRawArgs();
         output += '\n';
     }
-    FLOG_OUTPUT( output );
+    FLOG_BUILD_DIRECT( output.Get() );
 }
 
 // EmitStampMessage
@@ -972,59 +892,31 @@ void LinkerNode::EmitCompilationMessage( const Args & fullArgs ) const
 void LinkerNode::EmitStampMessage() const
 {
     ASSERT( m_LinkerStampExe.IsEmpty() == false );
+    const Node * linkerStampExe = m_StaticDependencies.End()[ -1 ].GetNode();
 
     AStackString<> output;
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
+    output += "Stamp: ";
+    output += GetName();
+    output += '\n';
+    if ( FLog::ShowInfo() || FBuild::Get().GetOptions().m_ShowCommandLines )
     {
-        output += "Stamp: ";
-        output += GetName();
-        output += '\n';
-    }
-    if ( FBuild::Get().GetOptions().m_ShowCommandLines )
-    {
-        const Node * linkerStampExe = m_StaticDependencies.End()[ -1 ].GetNode();
         output += linkerStampExe->GetName();
         output += ' ';
         output += m_LinkerStampExeArgs;
         output += '\n';
     }
-    FLOG_OUTPUT( output );
+    FLOG_BUILD_DIRECT( output.Get() );
 }
 
-// GetResponseFileMode
+// CanUseResponseFile
 //------------------------------------------------------------------------------
-ArgsResponseFileMode LinkerNode::GetResponseFileMode() const
+bool LinkerNode::CanUseResponseFile() const
 {
-    // User forces response files to be used, regardless of args length?
-    if ( m_LinkerForceResponseFile )
-    {
-        return ArgsResponseFileMode::ALWAYS;
-    }
-
-    // User explicitly says we can use response file if needed?
-    if ( m_LinkerAllowResponseFile )
-    {
-        return ArgsResponseFileMode::IF_NEEDED;
-    }
-
-    // Detect a compiler that supports response file args?
     #if defined( __WINDOWS__ )
-        // Generally only windows applications support response files (to overcome Windows command line limits)
-        // TODO:C This logic is Windows only as that's how it was originally implemented. It seems we
-        // probably want this for other platforms as well though.
-        if ( GetFlag( LINK_FLAG_MSVC ) ||
-             GetFlag( LINK_FLAG_GCC ) ||
-             GetFlag( LINK_FLAG_SNC ) ||
-             GetFlag( LINK_FLAG_ORBIS_LD ) ||
-             GetFlag( LINK_FLAG_GREENHILLS_ELXR ) ||
-             GetFlag( LINK_FLAG_CODEWARRIOR_LD ) )
-        {
-            return ArgsResponseFileMode::IF_NEEDED;
-        }
+        return ( GetFlag( LINK_FLAG_MSVC ) || GetFlag( LINK_FLAG_GCC ) || GetFlag( LINK_FLAG_SNC ) || GetFlag( LINK_FLAG_ORBIS_LD ) || GetFlag( LINK_FLAG_GREENHILLS_ELXR ) || GetFlag( LINK_FLAG_CODEWARRIOR_LD ) );
+    #else
+        return false;
     #endif
-
-    // Cannot use response files
-    return ArgsResponseFileMode::NEVER;
 }
 
 // GetImportLibName
@@ -1065,7 +957,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
 // GetOtherLibraries
 //------------------------------------------------------------------------------
 /*static*/ bool LinkerNode::GetOtherLibraries( NodeGraph & nodeGraph,
-                                               const BFFToken * iter,
+                                               const BFFIterator & iter,
                                                const Function * function,
                                                const AString & args,
                                                Dependencies & otherLibraries,
@@ -1076,13 +968,10 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     args.Tokenize( tokens );
 
     bool ignoreAllDefaultLibs = false;
-    bool isBstatic = false; // true while -Bstatic option is active
     Array< AString > defaultLibsToIgnore( 8, true );
     Array< AString > defaultLibs( 16, true );
     Array< AString > libs( 16, true );
-    Array< AString > dashlDynamicLibs( 16, true );
-    Array< AString > dashlStaticLibs( 16, true );
-    Array< AString > dashlFiles( 16, true );
+    Array< AString > dashlLibs( 16, true );
     Array< AString > libPaths( 16, true );
     Array< AString > envLibPaths( 32, true );
 
@@ -1150,41 +1039,8 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
             }
 
             // -l (lib)
-            AString value;
-            if ( GetOtherLibsArg( "l", value, it, end, false, msvc ) )
+            if ( GetOtherLibsArg( "l", dashlLibs, it, end, false, msvc ) )
             {
-                if ( value.BeginsWith( ':' ) )
-                {
-                    value.Trim( 1, 0 );
-                    dashlFiles.Append( Move( value ) );
-                }
-                else if ( isBstatic )
-                {
-                    dashlStaticLibs.Append( Move( value ) );
-                }
-                else
-                {
-                    dashlDynamicLibs.Append( Move( value ) );
-                }
-                continue;
-            }
-
-            // -Bdynamic (switching -l to looking up dynamic libraries before static libraries)
-            if ( ( token == "-Wl,-Bdynamic" ) || ( token == "-Bdynamic" ) ||
-                 ( token == "-Wl,-dy" ) || ( token == "-dy" ) ||
-                 ( token == "-Wl,-call_shared" ) || ( token == "-call_shared" ) )
-            {
-                isBstatic = false;
-                continue;
-            }
-
-            // -Bstatic (switching -l to looking up static libraries only)
-            if ( ( token == "-Wl,-Bstatic" ) || (token == "-Bstatic" ) ||
-                 ( token == "-Wl,-dn" ) || ( token == "-dn" ) ||
-                 ( token == "-Wl,-non_shared" ) || ( token == "-non_shared" ) ||
-                 ( token == "-Wl,-static" ) ) // -static means something different in GCC, so we don't check for it.
-            {
-                isBstatic = true;
                 continue;
             }
 
@@ -1236,6 +1092,20 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
         }
     }
 
+    if ( !msvc )
+    {
+        // convert -l<name> style libs to lib<name>.a
+        const AString * const endDL = dashlLibs.End();
+        for ( const AString * itDL = dashlLibs.Begin(); itDL != endDL; ++itDL )
+        {
+            AStackString<> libName;
+            libName += "lib";
+            libName += *itDL;
+            libName += ".a";
+            libs.Append( libName );
+        }
+    }
+
     // any remaining default libs are treated the same as libs
     libs.Append( defaultLibs );
 
@@ -1259,9 +1129,21 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
         }
         else
         {
-            if ( !GetOtherLibrary( nodeGraph, iter, function, otherLibraries, libPaths, *itL ) )
+            // check each libpath
+            const AString * const endP = libPaths.End();
+            for ( const AString * itP = libPaths.Begin(); itP != endP; ++itP )
             {
-                return false; // GetOtherLibrary will have emitted error
+                if ( !GetOtherLibrary( nodeGraph, iter, function, otherLibraries, *itP, *itL, found ) )
+                {
+                    return false; // GetOtherLibrary will have emitted error
+                }
+
+                if ( found )
+                {
+                    break;
+                }
+
+                // keep searching lib paths...
             }
         }
 
@@ -1273,74 +1155,13 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
         // If the file is actually needed, the linker will emit an error during link-time.
     }
 
-    // Convert -l options to nodes
-    if ( !msvc )
-    {
-        for ( const AString & lib : dashlDynamicLibs )
-        {
-            AStackString<> dynamicLib;
-            dynamicLib += "lib";
-            dynamicLib += lib;
-            dynamicLib += ".so";
-            AStackString<> staticLib;
-            staticLib += "lib";
-            staticLib += lib;
-            staticLib += ".a";
-
-            for ( const AString & path : libPaths )
-            {
-                bool found = false;
-
-                // Try to find dynamic library in this path
-                if ( !GetOtherLibrary( nodeGraph, iter, function, otherLibraries, path, dynamicLib, found ) )
-                {
-                    return false; // GetOtherLibrary will have emitted error
-                }
-                if ( found )
-                {
-                    break;
-                }
-
-                // Try to find static library in this path
-                if ( !GetOtherLibrary( nodeGraph, iter, function, otherLibraries, path, staticLib, found ) )
-                {
-                    return false; // GetOtherLibrary will have emitted error
-                }
-                if ( found )
-                {
-                    break;
-                }
-            }
-        }
-
-        for ( const AString & lib : dashlStaticLibs )
-        {
-            AStackString<> staticLib;
-            staticLib += "lib";
-            staticLib += lib;
-            staticLib += ".a";
-            if ( !GetOtherLibrary( nodeGraph, iter, function, otherLibraries, libPaths, staticLib ) )
-            {
-                return false; // GetOtherLibrary will have emitted error
-            }
-        }
-
-        for ( const AString & fileName : dashlFiles )
-        {
-            if ( !GetOtherLibrary( nodeGraph, iter, function, otherLibraries, libPaths, fileName ) )
-            {
-                return false; // GetOtherLibrary will have emitted error
-            }
-        }
-    }
-
     return true;
 }
 
 // GetOtherLibrary
 //------------------------------------------------------------------------------
 /*static*/ bool LinkerNode::GetOtherLibrary( NodeGraph & nodeGraph,
-                                             const BFFToken * iter,
+                                             const BFFIterator & iter,
                                              const Function * function,
                                              Dependencies & libs,
                                              const AString & path,
@@ -1370,52 +1191,29 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
         }
 
         // found existing node
-        libs.EmplaceBack( node );
+        libs.Append( Dependency( node ) );
         found = true;
         return true; // no error
     }
 
     // see if the file exists on disk at this location
-    if ( LinkerNodeFileExistsCache::Get().FileExists( potentialNodeNameClean ) )
+    if ( FileIO::FileExists( potentialNodeNameClean.Get() ) )
     {
         node = nodeGraph.CreateFileNode( potentialNodeNameClean );
-        libs.EmplaceBack( node );
+        libs.Append( Dependency( node ) );
         found = true;
-        FLOG_VERBOSE( "Additional library '%s' assumed to be '%s'\n", lib.Get(), potentialNodeNameClean.Get() );
+        FLOG_INFO( "Additional library '%s' assumed to be '%s'\n", lib.Get(), potentialNodeNameClean.Get() );
         return true; // no error
     }
 
     return true; // no error
 }
 
-// GetOtherLibrary
-//------------------------------------------------------------------------------
-/*static*/ bool LinkerNode::GetOtherLibrary( NodeGraph & nodeGraph,
-                                             const BFFToken * iter,
-                                             const Function * function,
-                                             Dependencies & libs,
-                                             const Array< AString > & paths,
-                                             const AString & lib )
-{
-    for ( const AString & path : paths )
-    {
-        bool found = false;
-        if ( !GetOtherLibrary( nodeGraph, iter, function, libs, path, lib, found ) )
-        {
-            return false; // GetOtherLibrary will have emitted error
-        }
-        if ( found )
-        {
-            break;
-        }
-    }
-    return true;
-}
 
 // GetOtherLibsArg
 //------------------------------------------------------------------------------
 /*static*/ bool LinkerNode::GetOtherLibsArg( const char * arg,
-                                             AString & value,
+                                             Array< AString > & list,
                                              const AString * & it,
                                              const AString * const & end,
                                              bool canonicalizePath,
@@ -1459,36 +1257,23 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     }
 
     // eliminate quotes
+    AStackString<> value;
     Args::StripQuotes( valueStart, valueEnd, value );
-
-    if ( canonicalizePath && !value.IsEmpty() )
-    {
-        NodeGraph::CleanPath( value );
-        PathUtils::EnsureTrailingSlash( value );
-    }
-
-    return true; // arg consumed
-}
-
-// GetOtherLibsArg
-//------------------------------------------------------------------------------
-/*static*/ bool LinkerNode::GetOtherLibsArg( const char * arg,
-                                             Array< AString > & list,
-                                             const AString * & it,
-                                             const AString * const & end,
-                                             bool canonicalizePath,
-                                             bool isMSVC )
-{
-    AString value;
-    if ( !GetOtherLibsArg( arg, value, it, end, canonicalizePath, isMSVC ) )
-    {
-        return false; // not our arg, not consumed
-    }
 
     // store if useful
     if ( value.IsEmpty() == false )
     {
-        list.Append( Move( value ) );
+        if ( canonicalizePath )
+        {
+            AStackString<> cleanValue;
+            NodeGraph::CleanPath( value, cleanValue );
+            PathUtils::EnsureTrailingSlash( cleanValue );
+            list.Append( cleanValue );
+        }
+        else
+        {
+            list.Append( value );
+        }
     }
 
     return true; // arg consumed
@@ -1497,7 +1282,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
 // DependOnNode
 //------------------------------------------------------------------------------
 /*static*/ bool LinkerNode::DependOnNode( NodeGraph & nodeGraph,
-                                          const BFFToken * iter,
+                                          const BFFIterator & iter,
                                           const Function * function,
                                           const AString & nodeName,
                                           Dependencies & nodes )
@@ -1520,13 +1305,13 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     // node not found - create a new FileNode, assuming we are
     // linking against an externally built library
     node = nodeGraph.CreateFileNode( nodeName );
-    nodes.EmplaceBack( node );
+    nodes.Append( Dependency( node ) );
     return true;
 }
 
 // DependOnNode
 //------------------------------------------------------------------------------
-/*static*/ bool LinkerNode::DependOnNode( const BFFToken * iter,
+/*static*/ bool LinkerNode::DependOnNode( const BFFIterator & iter,
                                           const Function * function,
                                           Node * node,
                                           Dependencies & nodes )
@@ -1537,7 +1322,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::LIBRARY_NODE )
     {
         // can link directly to it
-        nodes.EmplaceBack( node );
+        nodes.Append( Dependency( node ) );
         return true;
     }
 
@@ -1545,7 +1330,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::OBJECT_LIST_NODE )
     {
         // can link directly to it
-        nodes.EmplaceBack( node );
+        nodes.Append( Dependency( node ) );
         return true;
     }
 
@@ -1553,7 +1338,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::DLL_NODE )
     {
         // TODO:B Depend on import lib
-        nodes.EmplaceBack( node, (uint64_t)0, true ); // NOTE: Weak dependency
+        nodes.Append( Dependency( node, true ) ); // NOTE: Weak dependency
         return true;
     }
 
@@ -1561,7 +1346,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::FILE_NODE )
     {
         // can link directy against it
-        nodes.EmplaceBack( node );
+        nodes.Append( Dependency( node ) );
         return true;
     }
 
@@ -1569,7 +1354,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::COPY_FILE_NODE )
     {
         // depend on copy - will use input at build time
-        nodes.EmplaceBack( node );
+        nodes.Append( Dependency( node ) );
         return true;
     }
 
@@ -1577,7 +1362,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::EXEC_NODE )
     {
         // depend on ndoe - will use exe output at build time
-        nodes.EmplaceBack( node );
+        nodes.Append( Dependency( node ) );
         return true;
     }
 
@@ -1585,7 +1370,7 @@ void LinkerNode::GetImportLibName( const AString & args, AString & importLibName
     if ( node->GetType() == Node::ALIAS_NODE )
     {
         // handle all targets in alias
-        const AliasNode * an = node->CastTo< AliasNode >();
+        AliasNode * an = node->CastTo< AliasNode >();
         const Dependencies & aliasNodeList = an->GetAliasedNodes();
         const Dependencies::Iter end = aliasNodeList.End();
         for ( Dependencies::Iter it = aliasNodeList.Begin();

@@ -36,14 +36,6 @@
             .CompilerOutputPath         = '$OutputBase$/$ProjectPath$/'
         }
 
-        // Windows Manifest
-        //--------------------------------------------------------------------------
-        #if __WINDOWS__
-            .ManifestFile = '$OutputBase$/$ProjectPath$/$ProjectName$$ExeExtension$.manifest.tmp'
-            CreateManifest( '$ProjectName$-Manifest-$Platform$-$BuildConfigName$'
-                            .ManifestFile )
-        #endif
-
         // Executable
         //--------------------------------------------------------------------------
         Executable( '$ProjectName$-Exe-$Platform$-$BuildConfigName$' )
@@ -63,11 +55,6 @@
                                             + ' Ws2_32.lib'
                                             + ' User32.lib'
                                             + .CRTLibs_Static
-
-                // Manifest
-                .LinkerAssemblyResources    = .ManifestFile
-                .LinkerOptions              + ' /MANIFEST:EMBED'
-                                            + ' /MANIFESTINPUT:%3'
             #endif
             #if __LINUX__
                 .LinkerOptions              + ' -pthread -ldl -lrt'
@@ -83,7 +70,7 @@
             .TestExecutable                 = '$ProjectName$-Exe-$Platform$-$BuildConfigName$'
             .TestOutput                     = "$OutputBase$/$ProjectPath$/TestOutput.txt"
             .TestWorkingDir                 = 'Tools/FBuild/FBuildTest'
-            .TestTimeOut                    = 1000
+            .TestTimeOut                    = 500
             #if CI_BUILD
                 // Temporarily showing output to help identify things on the CI
                 // that are significantly slower than local runs
@@ -103,12 +90,20 @@
 
     // Aliases
     //--------------------------------------------------------------------------
-    CreateCommonAliases( .ProjectName )
+    #include "../../../gen_default_aliases.bff"
 
     // Visual Studio Project Generation
     //--------------------------------------------------------------------------
     #if __WINDOWS__
-        CreateVCXProject_Exe( .ProjectName, .ProjectPath, .ProjectConfigs )
+        VCXProject( '$ProjectName$-proj' )
+        {
+            .ProjectOutput              = '../tmp/VisualStudio/Projects/$ProjectName$.vcxproj'
+            .ProjectInputPaths          = '$ProjectPath$\'
+            .ProjectBasePath            = '$ProjectPath$\'
+
+            .LocalDebuggerCommand       = '^$(SolutionDir)..\^$(Configuration)\Tools\FBuild\FBuildTest\FBuildTest.exe'
+            .LocalDebuggerWorkingDirectory = '^$(SolutionDir)..\..\Code\Tools\FBuild\FBuildTest'
+        }
     #endif
 
     // XCode Project Generation

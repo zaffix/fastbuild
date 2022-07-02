@@ -28,8 +28,6 @@ public:
     void SetSelectedItem( size_t index );
     size_t GetSelectedItem() const;
 
-    void SetEnabled( bool enabled );
-
 protected:
     OSFont *    m_Font;
 };

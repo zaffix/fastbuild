@@ -55,19 +55,7 @@
 
             // Output
             .CompilerOutputPath         = '$OutputBase$/$ProjectPath$/'
-            
-            #if __WINDOWS__
-                .CompilerOptions        + ' -D"PSAPI_VERSION=1"'
-            #endif
         }
-
-        // Windows Manifest
-        //--------------------------------------------------------------------------
-        #if __WINDOWS__
-            .ManifestFile = '$OutputBase$/$ProjectPath$/$ProjectName$$ExeExtension$.manifest.tmp'
-            CreateManifest( '$ProjectName$-Manifest-$Platform$-$BuildConfigName$'
-                            .ManifestFile )
-        #endif
 
         // Executable
         //--------------------------------------------------------------------------
@@ -100,13 +88,7 @@
                                             + ' Shell32.lib'
                                             + ' Comctl32.lib'
                                             + ' Gdi32.lib'
-                                            + ' psapi.lib'
                                             + .CRTLibs_Static
-
-                // Manifest
-                .LinkerAssemblyResources    = .ManifestFile
-                .LinkerOptions              + ' /MANIFEST:EMBED'
-                                            + ' /MANIFESTINPUT:%3'
             #endif
             #if __OSX__
                 .LinkerOptions              + ' -framework Cocoa'
@@ -136,12 +118,19 @@
 
     // Aliases
     //--------------------------------------------------------------------------
-    CreateCommonAliases( .ProjectName )
+    #include "../../../gen_default_aliases.bff"
 
     // Visual Studio Project Generation
     //--------------------------------------------------------------------------
     #if __WINDOWS__
-        CreateVCXProject_Exe( .ProjectName, .ProjectPath, .ProjectConfigs )
+        VCXProject( '$ProjectName$-proj' )
+        {
+            .ProjectOutput              = '../tmp/VisualStudio/Projects/$ProjectName$.vcxproj'
+            .ProjectInputPaths          = '$ProjectPath$\'
+            .ProjectBasePath            = '$ProjectPath$\'
+
+            .LocalDebuggerCommand       = '^$(SolutionDir)..\^$(Configuration)\Tools\FBuild\FBuildWorker\FBuildWorker.exe'
+        }
     #endif
 
     // XCode Project Generation

@@ -7,14 +7,14 @@
 
 #include "Core/Env/Assert.h"
 #include "Core/FileIO/FileIO.h"
-#include "Core/Math/Constants.h"
 #include "Core/Math/Conversions.h"
+#include "Core/Math/Constants.h"
 #include "Core/Process/Atomic.h"
 #include "Core/Process/Thread.h"
 #include "Core/Profile/Profile.h"
+#include "Core/Time/Timer.h"
 #include "Core/Strings/AStackString.h"
 #include "Core/Strings/AString.h"
-#include "Core/Time/Timer.h"
 #include "Core/Tracing/Tracing.h"
 
 #if defined( __WINDOWS__ )
@@ -38,9 +38,9 @@
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-Process::Process( const volatile bool * mainAbortFlag,
+Process::Process( const volatile bool * masterAbortFlag,
                   const volatile bool * abortFlag )
-    : m_Started( false )
+: m_Started( false )
 #if defined( __WINDOWS__ )
     , m_SharingHandles( false )
     , m_RedirectHandles( true )
@@ -53,7 +53,7 @@ Process::Process( const volatile bool * mainAbortFlag,
     , m_HasAlreadyWaitTerminated( false )
 #endif
     , m_HasAborted( false )
-    , m_MainAbortFlag( mainAbortFlag )
+    , m_MasterAbortFlag( masterAbortFlag )
     , m_AbortFlag( abortFlag )
 {
     #if defined( __WINDOWS__ )
@@ -130,7 +130,7 @@ Process::~Process()
 #if defined( __WINDOWS__ )
     /*static*/ uint64_t Process::GetProcessCreationTime( const void * hProc )
     {
-        if ( hProc == nullptr )
+        if ( hProc == 0 )
         {
             return 0;
         }
@@ -173,14 +173,14 @@ bool Process::Spawn( const char * executable,
                      const char * environment,
                      bool shareHandles )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     ASSERT( !m_Started );
     ASSERT( executable );
 
-    if ( m_MainAbortFlag && AtomicLoadRelaxed( m_MainAbortFlag ) )
+    if ( m_MasterAbortFlag && AtomicLoadRelaxed( m_MasterAbortFlag ) )
     {
-        // Once main process has aborted, we no longer permit spawning sub-processes.
+        // Once master process has aborted, we no longer permit spawning sub-processes.
         return false;
     }
 
@@ -312,7 +312,7 @@ bool Process::Spawn( const char * executable,
             argCopy.Tokenize( splitArgs );
 
             // Build Vector
-            for ( AString & arg : splitArgs )
+            for ( auto & arg : splitArgs )
             {
                 if ( arg.BeginsWith( '"' ) && arg.EndsWith( '"' ) )
                 {
@@ -419,10 +419,14 @@ bool Process::IsRunning() const
     #if defined( __WINDOWS__ )
         switch ( WaitForSingleObject( GetProcessInfo().hProcess, 0 ) )
         {
-            case WAIT_OBJECT_0: return false;
-            case WAIT_TIMEOUT:  return true;
-            default:            ASSERT( false ); return false; // we should never get here
+            case WAIT_OBJECT_0:
+                return false;
+
+            case WAIT_TIMEOUT:
+                return true;
         }
+        ASSERT( false ); // we should never get here
+        return false;
     #elif defined( __LINUX__ ) || defined( __APPLE__ )
         // already waited?
         if ( m_HasAlreadyWaitTerminated )
@@ -566,10 +570,16 @@ void Process::Detach()
 
 // ReadAllData
 //------------------------------------------------------------------------------
-bool Process::ReadAllData( AString & outMem,
-                           AString & errMem,
+bool Process::ReadAllData( AutoPtr< char > & outMem, uint32_t * outMemSize,
+                           AutoPtr< char > & errMem, uint32_t * errMemSize,
                            uint32_t timeOutMS )
 {
+    // we'll capture into these growing buffers
+    uint32_t outSize = 0;
+    uint32_t errSize = 0;
+    uint32_t outBufferSize = 0;
+    uint32_t errBufferSize = 0;
+
     Timer t;
 
     #if defined( __LINUX__ )
@@ -583,23 +593,23 @@ bool Process::ReadAllData( AString & outMem,
     bool processExited = false;
     for ( ;; )
     {
-        const bool mainAbort = ( m_MainAbortFlag && AtomicLoadRelaxed( m_MainAbortFlag ) );
+        const bool masterAbort = ( m_MasterAbortFlag && AtomicLoadRelaxed( m_MasterAbortFlag ) );
         const bool abort = ( m_AbortFlag && AtomicLoadRelaxed( m_AbortFlag ) );
-        if ( abort || mainAbort )
+        if ( abort || masterAbort )
         {
-            PROFILE_SECTION( "Abort" );
+            PROFILE_SECTION( "Abort" )
             KillProcessTree();
             m_HasAborted = true;
             break;
         }
 
-        const uint32_t prevOutSize = outMem.GetLength();
-        const uint32_t prevErrSize = errMem.GetLength();
-        Read( m_StdOutRead, outMem );
-        Read( m_StdErrRead, errMem );
+        uint32_t prevOutSize = outSize;
+        uint32_t prevErrSize = errSize;
+        Read( m_StdOutRead, outMem, outSize, outBufferSize );
+        Read( m_StdErrRead, errMem, errSize, errBufferSize );
 
         // did we get some data?
-        if ( ( prevOutSize != outMem.GetLength() ) || ( prevErrSize != errMem.GetLength() ) )
+        if ( ( prevOutSize != outSize ) || ( prevErrSize != errSize ) )
         {
             #if defined( __LINUX__ )
                 // Reset sleep interval            
@@ -616,7 +626,7 @@ bool Process::ReadAllData( AString & outMem,
                 if ( result == WAIT_TIMEOUT )
                 {
                     // Check if timeout is hit
-                    if ( ( timeOutMS > 0 ) && ( t.GetElapsedMS() >= (float)timeOutMS ) )
+                    if ( ( timeOutMS > 0 ) && ( t.GetElapsedMS() >= timeOutMS ) )
                     {
                         Terminate();
                         return false; // Timed out
@@ -668,13 +678,16 @@ bool Process::ReadAllData( AString & outMem,
         break; // all done
     }
 
+    // if owner asks for pointers, they now own the mem
+    if ( outMemSize ) { *outMemSize = outSize; }
+    if ( errMemSize ) { *errMemSize = errSize; }
     return true;
 }
 
 // Read
 //------------------------------------------------------------------------------
 #if defined( __WINDOWS__ )
-    void Process::Read( HANDLE handle, AString & buffer )
+    void Process::Read( HANDLE handle, AutoPtr< char > & buffer, uint32_t & sizeSoFar, uint32_t & bufferSize )
     {
         // anything available?
         DWORD bytesAvail( 0 );
@@ -687,25 +700,39 @@ bool Process::ReadAllData( AString & outMem,
             return;
         }
 
-        // Will data fit in existing buffer?
-        const uint32_t sizeSoFar = buffer.GetLength();
-        const uint32_t newSize = ( sizeSoFar + bytesAvail );
-        if ( newSize > buffer.GetReserved() )
+        // will it fit in the buffer we have?
+        if ( ( sizeSoFar + bytesAvail ) > bufferSize )
         {
-            // Expand buffer for new data in large chunks
-            const uint32_t newBufferSize = Math::Max< uint32_t >( newSize, buffer.GetReserved() + ( 16 * MEGABYTE ) );
-            buffer.SetReserved( newBufferSize );
+            // no - allocate a bigger buffer (also handles the first time with no buffer)
+
+            // TODO:B look at a new container type (like a linked list of 1mb buffers) to avoid the wasteage here
+            // The caller has to take a copy to avoid the overhead if they want to hang onto the data
+            // grow buffer in at least 16MB chunks, to prevent future reallocations
+            uint32_t newBufferSize = Math::Max< uint32_t >( sizeSoFar + bytesAvail, bufferSize + ( 16 * MEGABYTE ) );
+            char * newBuffer = (char *)ALLOC( newBufferSize + 1 ); // +1 so we can always add a null char
+            if ( buffer.Get() )
+            {
+                // transfer and free old buffer
+                memcpy( newBuffer, buffer.Get(), sizeSoFar );
+            }
+            buffer = newBuffer; // will take care of deletion of old buffer
+            bufferSize = newBufferSize;
+            buffer.Get()[ sizeSoFar ] = '\000';
         }
+
+        ASSERT( sizeSoFar + bytesAvail <= bufferSize ); // sanity check
 
         // read the new data
         DWORD bytesReadNow = 0;
-        if ( !::ReadFile( handle, buffer.Get() + sizeSoFar, bytesAvail, (LPDWORD)&bytesReadNow, nullptr ) )
+        if ( !::ReadFile( handle, buffer.Get() + sizeSoFar, bytesAvail, (LPDWORD)&bytesReadNow, 0 ) )
         {
-            ASSERT( false ); // error!
+            return;
         }
-        
-        // Update length
-        buffer.SetLength( sizeSoFar + bytesReadNow );
+        ASSERT( bytesReadNow == bytesAvail );
+        sizeSoFar += bytesReadNow;
+
+        // keep data null char terminated for caller convenience
+        buffer.Get()[ sizeSoFar ] = '\000';
     }
 #endif
 
@@ -713,7 +740,7 @@ bool Process::ReadAllData( AString & outMem,
 // Read
 //------------------------------------------------------------------------------
 #if defined( __LINUX__ ) || defined( __APPLE__ )
-    void Process::Read( int handle, AString & buffer )
+    void Process::Read( int handle, AutoPtr< char > & buffer, uint32_t & sizeSoFar, uint32_t & bufferSize )
     {
         // any data available?
         timeval timeout;
@@ -734,24 +761,133 @@ bool Process::ReadAllData( AString & outMem,
         }
 
         // how much space do we have left for reading into?
-        const uint32_t spaceInBuffer = ( buffer.GetReserved() - buffer.GetLength() );
+        uint32_t spaceInBuffer = ( bufferSize - sizeSoFar );
         if ( spaceInBuffer == 0 )
         {
-            // Expand buffer for new data in large chunks
-            const uint32_t newBufferSize = ( buffer.GetReserved() + ( 16 * MEGABYTE ) );
-            buffer.SetReserved( newBufferSize );
+            // allocate a bigger buffer (also handles the first time with no buffer)
+
+            // TODO:B look at a new container type (like a linked list of 1mb buffers) to avoid the wasteage here
+            // The caller has to take a copy to avoid the overhead if they want to hang onto the data
+            // grow buffer in at least 16MB chunks, to prevent future reallocations
+            uint32_t newBufferSize = ( sizeSoFar + ( 16 * MEGABYTE ) );
+            char * newBuffer = (char *)ALLOC( newBufferSize + 1 ); // +1 so we can always add a null char
+            if ( buffer.Get() )
+            {
+                // transfer and free old buffer
+                memcpy( newBuffer, buffer.Get(), sizeSoFar );
+            }
+            buffer = newBuffer; // will take care of deletion of old buffer
+            bufferSize = newBufferSize;
+            spaceInBuffer = ( bufferSize - sizeSoFar );
+            buffer.Get()[ sizeSoFar ] = '\000';
         }
 
         // read the new data
-        ssize_t result = read( handle, buffer.Get() + buffer.GetLength(), spaceInBuffer );
+        ssize_t result = read( handle, buffer.Get() + sizeSoFar, spaceInBuffer );
         if ( result == -1 )
         {
             ASSERT( false ); // error!
-            result = 0; // no bytes read
+            return;
         }
-        
-        // Update length
-        buffer.SetLength( buffer.GetLength() + (uint32_t)result );
+
+        // account for newly read bytes
+        sizeSoFar += (uint32_t)result;
+
+        // keep data null char terminated for caller convenience
+        buffer.Get()[ sizeSoFar ] = '\000';
+    }
+#endif
+
+// ReadStdOut
+//------------------------------------------------------------------------------
+#if defined( __WINDOWS__ )
+    char * Process::ReadStdOut( uint32_t * bytesRead )
+    {
+        return Read( m_StdOutRead, bytesRead );
+    }
+#endif
+
+// ReadStdOut
+//------------------------------------------------------------------------------
+#if defined( __WINDOWS__ )
+    char * Process::ReadStdErr( uint32_t * bytesRead )
+    {
+        return Read( m_StdErrRead, bytesRead );
+    }
+#endif
+
+// ReadStdOut
+//------------------------------------------------------------------------------
+#if defined( __WINDOWS__ )
+    uint32_t Process::ReadStdOut( char * outputBuffer, uint32_t outputBufferSize )
+    {
+        return Read( m_StdOutRead, outputBuffer, outputBufferSize );
+    }
+#endif
+
+// ReadStdErr
+//------------------------------------------------------------------------------
+#if defined( __WINDOWS__ )
+    uint32_t Process::ReadStdErr( char * outputBuffer, uint32_t outputBufferSize )
+    {
+        return Read( m_StdErrRead, outputBuffer, outputBufferSize );
+    }
+#endif
+
+// Read
+//------------------------------------------------------------------------------
+#if defined( __WINDOWS__ )
+    char * Process::Read( HANDLE handle, uint32_t * bytesRead )
+    {
+        // see if there's anything in the pipe
+        DWORD bytesAvail;
+        VERIFY( PeekNamedPipe( handle, nullptr, 0, nullptr, (LPDWORD)&bytesAvail, nullptr ) );
+        if ( bytesAvail == 0 )
+        {
+            if ( bytesRead )
+            {
+                *bytesRead = 0;
+            }
+            return nullptr;
+        }
+
+        // allocate output buffer
+        char * mem = (char *)ALLOC( bytesAvail + 1 ); // null terminate for convenience
+        mem[ bytesAvail ] = 0;
+
+        // read the data
+        DWORD bytesReadNow = 0;
+        VERIFY( ReadFile( handle, mem, bytesAvail, (LPDWORD)&bytesReadNow, 0 ) );
+        ASSERT( bytesReadNow == bytesAvail );
+        if ( bytesRead )
+        {
+            *bytesRead = bytesReadNow;
+        }
+        return mem;
+    }
+#endif
+
+// Read
+//------------------------------------------------------------------------------
+#if defined( __WINDOWS__ )
+    uint32_t Process::Read( HANDLE handle, char * outputBuffer, uint32_t outputBufferSize )
+    {
+        // see if there's anything in the pipe
+        DWORD bytesAvail;
+        VERIFY( PeekNamedPipe( handle, nullptr, 0, 0, (LPDWORD)&bytesAvail, 0 ) );
+        if ( bytesAvail == 0 )
+        {
+            return 0;
+        }
+
+        // if there is more available than we have space for, just read as much as we can
+        uint32_t bytesToRead = Math::Min<uint32_t>( outputBufferSize, bytesAvail );
+
+        // read the data
+        DWORD bytesReadNow = 0;
+        VERIFY( ReadFile( handle, outputBuffer, bytesToRead, (LPDWORD)&bytesReadNow, 0 ) );
+        ASSERT( bytesReadNow == bytesToRead );
+        return bytesToRead;
     }
 #endif
 

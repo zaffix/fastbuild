@@ -12,13 +12,14 @@
 #include "Tools/FBuild/FBuildCore/Graph/FileNode.h"
 #include "Tools/FBuild/FBuildCore/Graph/Node.h"
 #include "Tools/FBuild/FBuildCore/Graph/ObjectNode.h"
-#include "Tools/FBuild/FBuildCore/Helpers/BuildProfiler.h"
 #include <Tools/FBuild/FBuildCore/Helpers/MultiBuffer.h>
 #include "Tools/FBuild/FBuildCore/WorkerPool/Job.h"
 #include "Tools/FBuild/FBuildCore/WorkerPool/JobQueue.h"
 
 #include "Core/Env/ErrorFormat.h"
 #include "Core/FileIO/ConstMemoryStream.h"
+#include "Core/FileIO/FileIO.h"
+#include "Core/FileIO/FileStream.h"
 #include "Core/FileIO/MemoryStream.h"
 #include "Core/Math/Random.h"
 #include "Core/Process/Atomic.h"
@@ -29,7 +30,7 @@
 #define CLIENT_STATUS_UPDATE_FREQUENCY_SECONDS ( 0.1f )
 #define CONNECTION_REATTEMPT_DELAY_TIME ( 10.0f )
 #define SYSTEM_ERROR_ATTEMPT_COUNT ( 3 )
-#define DIST_INFO( ... ) do { if ( m_DetailedLogging ) { FLOG_OUTPUT( __VA_ARGS__ ); } } while( false )
+#define DIST_INFO( ... ) if ( m_DetailedLogging ) { FLOG_BUILD( __VA_ARGS__ ); }
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
@@ -57,8 +58,6 @@ Client::Client( const Array< AString > & workerList,
 //------------------------------------------------------------------------------
 Client::~Client()
 {
-    PROFILE_FUNCTION;
-
     SetShuttingDown();
 
     AtomicStoreRelaxed( &m_ShouldExit, true );
@@ -104,7 +103,7 @@ Client::~Client()
 //------------------------------------------------------------------------------
 /*static*/ uint32_t Client::ThreadFuncStatic( void * param )
 {
-    PROFILE_SET_THREAD_NAME( "ClientThread" );
+    PROFILE_SET_THREAD_NAME( "ClientThread" )
 
     Client * c = (Client *)param;
     c->ThreadFunc();
@@ -115,7 +114,7 @@ Client::~Client()
 //------------------------------------------------------------------------------
 void Client::ThreadFunc()
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     // ensure first status update will be sent more rapidly
     m_StatusUpdateTimer.Start();
@@ -146,7 +145,7 @@ void Client::ThreadFunc()
 //------------------------------------------------------------------------------
 void Client::LookForWorkers()
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     MutexHolder mh( m_ServerListMutex );
 
@@ -191,8 +190,8 @@ void Client::LookForWorkers()
             continue;
         }
 
-        // ignore deny listed workers
-        if ( ss.m_Denylisted )
+        // ignore blacklisted workers
+        if ( ss.m_Blacklisted )
         {
             continue;
         }
@@ -237,57 +236,45 @@ void Client::LookForWorkers()
 //------------------------------------------------------------------------------
 void Client::CommunicateJobAvailability()
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
-    // We send updates periodically as a baseline, but other events can result
-    // us sending extra update messages
-    const bool timerExpired = ( m_StatusUpdateTimer.GetElapsed() >= CLIENT_STATUS_UPDATE_FREQUENCY_SECONDS );
+    // too soon since last status update?
+    if ( m_StatusUpdateTimer.GetElapsed() < CLIENT_STATUS_UPDATE_FREQUENCY_SECONDS )
+    {
+        return;
+    }
+
+    m_StatusUpdateTimer.Start(); // reset time
 
     // has status changed since we last sent it?
     uint32_t numJobsAvailable = (uint32_t)JobQueue::Get().GetNumDistributableJobsAvailable();
     Protocol::MsgStatus msg( numJobsAvailable );
 
-    // Update each server so it knows how many jobs we have available now
     MutexHolder mh( m_ServerListMutex );
-    for ( ServerState & ss : m_ServerList )
+    if ( m_ServerList.IsEmpty() )
     {
-        // Do we have a connection?
-        MutexHolder ssMH( ss.m_Mutex );
-        const ConnectionInfo * connection = AtomicLoadRelaxed( &ss.m_Connection );
-        if ( connection == nullptr )
-        {
-            continue; // no connection
-        }
-
-        // Update the worker periodically (but only if the state has changed)
-        bool sendAvailabilityToWorker = timerExpired && ( ss.m_NumJobsAvailable != numJobsAvailable );
-
-        // Update worker when jobs become available if there were no jobs available,
-        // even if the periodic update timer has not expired. This creates more traffic,
-        // but significantly reduces job scheduling latency when:
-        //  - a) A build starts, if workers connect before he first jobs become available.
-        // OR
-        //  - b) During builds, after any period of worker starvation (having zero jobs available
-        //       and jobs then becoming available)
-        //
-        // In both cases, we avoid upto CLIENT_STATUS_UPDATE_FREQUENCY_SECONDS of latency
-        if ( numJobsAvailable && ( ss.m_NumJobsAvailable == 0 ) )
-        {
-            sendAvailabilityToWorker = true;
-        }
-
-        if ( sendAvailabilityToWorker )
-        {
-            PROFILE_SECTION( "UpdateJobAvailability" );
-            SendMessageInternal( connection, msg );
-            ss.m_NumJobsAvailable = numJobsAvailable;
-        }
+        return; // no servers to communicate with
     }
 
-    // Restart periodic update timer if needed
-    if ( timerExpired )
+    // update each server to know how many jobs we have now
+    ServerState * it = m_ServerList.Begin();
+    const ServerState * const end = m_ServerList.End();
+    while ( it != end )
     {
-        m_StatusUpdateTimer.Start();
+        if ( AtomicLoadRelaxed( &it->m_Connection ) )
+        {
+            MutexHolder ssMH( it->m_Mutex );
+            if ( const ConnectionInfo * connection = AtomicLoadRelaxed( &it->m_Connection ) )
+            {
+                if ( it->m_NumJobsAvailable != numJobsAvailable )
+                {
+                    PROFILE_SECTION( "UpdateJobAvailability" )
+                    SendMessageInternal( connection, msg );
+                    it->m_NumJobsAvailable = numJobsAvailable;
+                }
+            }
+        }
+        ++it;
     }
 }
 
@@ -327,6 +314,8 @@ void Client::SendMessageInternal( const ConnectionInfo * connection, const Proto
 /*virtual*/ void Client::OnReceive( const ConnectionInfo * connection, void * data, uint32_t size, bool & keepMemory )
 {
     keepMemory = true; // we'll take care of freeing the memory
+
+    MutexHolder mh( m_ServerListMutex );
 
     ServerState * ss = (ServerState *)connection->GetUserData();
     ASSERT( ss );
@@ -371,12 +360,6 @@ void Client::SendMessageInternal( const ConnectionInfo * connection, const Proto
             Process( connection, msg, payload, payloadSize );
             break;
         }
-        case Protocol::MSG_JOB_RESULT_COMPRESSED:
-        {
-            const Protocol::MsgJobResultCompressed * msg = static_cast< const Protocol::MsgJobResultCompressed * >( imsg );
-            Process( connection, msg, payload, payloadSize );
-            break;
-        }
         case Protocol::MSG_REQUEST_MANIFEST:
         {
             const Protocol::MsgRequestManifest * msg = static_cast< const Protocol::MsgRequestManifest * >( imsg );
@@ -409,13 +392,13 @@ void Client::SendMessageInternal( const ConnectionInfo * connection, const Proto
 //------------------------------------------------------------------------------
 void Client::Process( const ConnectionInfo * connection, const Protocol::MsgRequestJob * )
 {
-    PROFILE_SECTION( "MsgRequestJob" );
+    PROFILE_SECTION( "MsgRequestJob" )
 
     ServerState * ss = (ServerState *)connection->GetUserData();
     ASSERT( ss );
 
-    // no jobs for deny listed workers
-    if ( ss->m_Denylisted )
+    // no jobs for blacklisted workers
+    if ( ss->m_Blacklisted )
     {
         MutexHolder mh( ss->m_Mutex );
         Protocol::MsgNoJobAvailable msg;
@@ -426,7 +409,7 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgRequ
     Job * job = JobQueue::Get().GetDistributableJobToProcess( true );
     if ( job == nullptr )
     {
-        PROFILE_SECTION( "NoJob" );
+        PROFILE_SECTION( "NoJob" )
         // tell the client we don't have anything right now
         // (we completed or gave away the job already)
         MutexHolder mh( ss->m_Mutex );
@@ -443,77 +426,28 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgRequ
 
     ss->m_Jobs.Append( job ); // Track in-flight job
 
-    // Reset the Available Jobs count for this worker. This ensures that we send
-    // another status update message to communicate new jobs becoming available.
-    // Without this, we might return to the same count as before requesting the
-    // current job, resuling in a missed update message.
-    ss->m_NumJobsAvailable = 0;
-
     // if tool is explicity specified, get the id of the tool manifest
-    const Node * n = job->GetNode()->CastTo< ObjectNode >()->GetCompiler();
+    Node * n = job->GetNode()->CastTo< ObjectNode >()->GetCompiler();
     const ToolManifest & manifest = n->CastTo< CompilerNode >()->GetManifest();
-    const uint64_t toolId = manifest.GetToolId();
+    uint64_t toolId = manifest.GetToolId();
     ASSERT( toolId );
 
     // output to signify remote start
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        FLOG_OUTPUT( "-> Obj: %s <REMOTE: %s>\n", job->GetNode()->GetName().Get(), ss->m_RemoteName.Get() );
-    }
+    FLOG_BUILD( "-> Obj: %s <REMOTE: %s>\n", job->GetNode()->GetName().Get(), ss->m_RemoteName.Get() );
     FLOG_MONITOR( "START_JOB %s \"%s\" \n", ss->m_RemoteName.Get(), job->GetNode()->GetName().Get() );
 
-    // Determine compression level we'd like the Server to use for returning the results
-    int16_t resultCompressionLevel = -1; // Default compression level
-    if ( FBuild::IsValid() )
     {
-        // If we will write the results to the cache, and this node is cacheable
-        // then we want to respect higher cache compression levels if set
-        const int16_t cacheCompressionLevel = FBuild::Get().GetOptions().m_CacheCompressionLevel;
-        if ( ( cacheCompressionLevel != 0 ) && 
-             ( FBuild::Get().GetOptions().m_UseCacheWrite ) && 
-             ( job->GetNode()->CastTo< ObjectNode >()->ShouldUseCache() ) )
-        {
-            resultCompressionLevel = Math::Max( resultCompressionLevel, cacheCompressionLevel );
-        }
-    }
-    
-    // Take note of the results compression level so we know to expect
-    // compressed results
-    job->SetResultCompressionLevel( resultCompressionLevel );
-
-    {
-        PROFILE_SECTION( "SendJob" );
-        Protocol::MsgJob msg( toolId, resultCompressionLevel );
+        PROFILE_SECTION( "SendJob" )
+        Protocol::MsgJob msg( toolId );
         SendMessageInternal( connection, msg, stream );
     }
 }
 
 // Process( MsgJobResult )
 //------------------------------------------------------------------------------
-void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobResult * /*msg*/, const void * payload, size_t payloadSize )
+void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobResult *, const void * payload, size_t payloadSize )
 {
-    PROFILE_SECTION( "MsgJobResult" );
-    const bool compressed = false;
-    ProcessJobResultCommon( connection, compressed, payload, payloadSize );
-}
-
-// Process( MsgJobResultCompressed )
-//------------------------------------------------------------------------------
-void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobResultCompressed * /*msg*/, const void * payload, size_t payloadSize )
-{
-    PROFILE_SECTION( "MsgJobResultCompressed" );
-    const bool compressed = true;
-    ProcessJobResultCommon( connection, compressed, payload, payloadSize );
-}
-
-// ProcessJobResultCommon
-//------------------------------------------------------------------------------
-void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isCompressed, const void * payload, size_t payloadSize )
-{
-    // Take note of the current time. We'll consider the job to have completed at this time.
-    // Doing it as soon as possible makes it more accurate, as work below can take a non-trivial
-    // amount of time. (For example OnReturnRemoteJob when cancelling the local job in a race)
-    const int64_t receivedResultEndTime = Timer::GetNow();
+    PROFILE_SECTION( "MsgJobResult" )
 
     // find server
     ServerState * ss = (ServerState *)connection->GetUserData();
@@ -538,13 +472,10 @@ void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isC
 
     uint32_t buildTime;
     ms.Read( buildTime );
-    
-    uint16_t remoteThreadId = 0;
-    ms.Read( remoteThreadId );
 
     // get result data (built data or errors if failed)
-    uint32_t dataSize = 0;
-    ms.Read( dataSize );
+    uint32_t size = 0;
+    ms.Read( size );
     const void * data = (const char *)ms.GetData() + ms.Tell();
 
     {
@@ -554,159 +485,25 @@ void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isC
 
     // Has the job been cancelled in the interim?
     // (Due to a Race by the main thread for example)
-    bool raceLost = false;
-    bool raceWon = false;
-    const Node* node = nullptr;
-    uint32_t jobSystemErrorCount = 0;
-    Job * job = JobQueue::Get().OnReturnRemoteJob( jobId,
-                                                   systemError,
-                                                   raceLost, // Set by OnReturnRemoteJob
-                                                   raceWon, // Set by OnReturnRemoteJob
-                                                   node, // Set by OnReturnRemoteJob
-                                                   jobSystemErrorCount ); // Set by OnReturnRemoteJob
-
-    // Prepare failure output if needed
-    AStackString< 8192 > failureOutput;
-    if ( result == false )
-    {
-        failureOutput.Format( "PROBLEM: %s\n", node->GetName().Get() );
-        for ( const AString & message : messages )
-        {
-            failureOutput += message;
-        }
-    }
-
-    // For system failures, mark worker so no more jobs are scheduled to it
-    if ( systemError )
-    {
-        ss->m_Denylisted = true;
-
-        // -distverbose message
-        const size_t workerIndex = (size_t)( ss - m_ServerList.Begin() );
-        const AString & workerName = m_WorkerList[ workerIndex ];
-        DIST_INFO( "Remote System Failure!\n"
-                    " - Deny listed Worker: %s\n"
-                    " - Node              : %s\n"
-                    " - Job Error Count   : %u / %u\n"
-                    " - Details           :\n"
-                    "%s",
-                    workerName.Get(),
-                    node->GetName().Get(),
-                    jobSystemErrorCount, SYSTEM_ERROR_ATTEMPT_COUNT,
-                    failureOutput.Get() );
-    }
-
-    // Handle build profiling output
-    if ( BuildProfiler::IsValid() )
-    {
-        // Chose description.
-        // NOTE:
-        // * String lifetime must extend past BuildProfiler destruction
-        // * String contents feeds into color selection for profiling json
-        const char* resultStr = "Compile";
-        if ( systemError )
-        {
-            if ( raceWon )       { resultStr = "(System Failure) (Race Won) Compile"; }
-            else if ( raceLost ) { resultStr = "(System Failure) (Race Lost) Compile"; }
-            else                 { resultStr = "(System Failure) Compile"; }
-        }
-        else if ( !result )
-        {
-            if ( raceWon )       { resultStr = "(Failure) (Race Won) Compile"; }
-            else if ( raceLost ) { resultStr = "(Failure) (Race Lost) Compile"; }
-            else                 { resultStr = "(Failure) Compile"; }
-        }
-
-        // Record information about worker
-        const uint32_t workerId = static_cast<uint32_t>( ss - m_ServerList.Begin() );
-        const int64_t start = receivedResultEndTime - (int64_t)( ( (double)buildTime / 1000 ) * (double)Timer::GetFrequency() );
-        BuildProfiler::Get().RecordRemote( workerId,
-                                           ss->m_RemoteName,
-                                           remoteThreadId,
-                                           start,
-                                           receivedResultEndTime,
-                                           resultStr,
-                                           node->GetName().Get());
-    }
-
-    // Handle verbose logging
-    if ( m_DetailedLogging )
-    {
-        const char* resultStr = "";
-        if ( systemError )
-        {
-            if ( raceWon )       { resultStr = " (System Failure) (Race Won)"; }
-            else if ( raceLost ) { resultStr = " (System Failure) (Race Lost)"; }
-            else                 { resultStr = " (System Failure)"; }
-        }
-        else if ( !result )
-        {
-            if ( raceWon )       { resultStr = " (Failure) (Race Won)"; }
-            else if ( raceLost ) { resultStr = " (Failure) (Race Lost)"; }
-            else                 { resultStr = " (Failure)"; }
-        }
-        DIST_INFO( "Got Result: %s - %s%s\n", ss->m_RemoteName.Get(),
-                                              node->GetName().Get(),
-                                              resultStr );
-    }
-
-    if ( FLog::IsMonitorEnabled() )
-    {
-        AStackString<> msgBuffer;
-        Job::GetMessagesForMonitorLog( messages, msgBuffer );
-
-        FLOG_MONITOR( "FINISH_JOB %s %s \"%s\" \"%s\"\n",
-                      result ? "SUCCESS" : "ERROR",
-                      ss->m_RemoteName.Get(),
-                      node->GetName().Get(),
-                      msgBuffer.Get() );
-    }
-
-    // Should remote job be discarded?
-    // Can happen in cases such as:
-    //   a) local job won a race
-    //   b) local race started and remote job was a system failure
+    Job * job = JobQueue::Get().OnReturnRemoteJob( jobId );
     if ( job == nullptr )
     {
         // don't save result as we were cancelled
         return;
     }
 
+    DIST_INFO( "Got Result: %s - %s%s\n", ss->m_RemoteName.Get(),
+                                          job->GetNode()->GetName().Get(),
+                                          job->GetDistributionState() == Job::DIST_RACE_WON_REMOTELY ? " (Won Race)" : "" );
+
     job->SetMessages( messages );
 
     if ( result == true )
     {
         // built ok - serialize to disc
-        
-        ObjectNode * objectNode = node->CastTo< ObjectNode >();
+        MultiBuffer mb( data, ms.GetSize() - ms.Tell() );
 
-        // Store to cache if needed
-        const bool writeToCache = FBuild::Get().GetOptions().m_UseCacheWrite &&
-                                  objectNode->ShouldUseCache();
-        if ( writeToCache )
-        {
-            if ( isCompressed )
-            {
-                // Write already compressed result to cache
-                objectNode->WriteToCache_FromCompressedData( job,
-                                                             data,
-                                                             dataSize,
-                                                             0 ); // compression time is remote and unknown
-            }
-            else
-            {
-                // Compress and write result to cache
-                objectNode->WriteToCache_FromUncompressedData( job, data, dataSize );
-            }
-        }
-
-        // Decompress if needed
-        MultiBuffer mb( data, dataSize );
-        if ( isCompressed )
-        {
-            mb.Decompress();
-        }
-
+        ObjectNode * objectNode = job->GetNode()->CastTo< ObjectNode >();
         const AString & nodeName = objectNode->GetName();
         if ( Node::EnsurePathExistsForFile( nodeName ) == false )
         {
@@ -747,10 +544,17 @@ void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isC
                 objectNode->SetLastBuildTime( buildTime );
                 objectNode->SetStatFlag(Node::STATS_BUILT);
                 objectNode->SetStatFlag(Node::STATS_BUILT_REMOTE);
+
+                // commit to cache?
+                if ( FBuild::Get().GetOptions().m_UseCacheWrite &&
+                        objectNode->ShouldUseCache() )
+                {
+                    objectNode->WriteToCache( job );
+                }
             }
             else
             {
-                objectNode->SetStatFlag( Node::STATS_FAILED );
+                objectNode->GetStatFlag( Node::STATS_FAILED );
             }
         }
 
@@ -760,35 +564,58 @@ void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isC
 
         if ( objectNode->IsMSVC())
         {
-            if ( objectNode->IsWarningsAsErrorsMSVC() == false )
+            if ( objectNode->GetFlag( ObjectNode::FLAG_WARNINGS_AS_ERRORS_MSVC ) == false )
             {
-                FileNode::HandleWarningsMSVC( job, objectNode->GetName(), msgBuffer );
-            }
-        }
-        else if ( objectNode->IsClangCl() )
-        {
-            if ( objectNode->IsWarningsAsErrorsMSVC() == false )
-            {
-                FileNode::HandleWarningsClangCl( job, objectNode->GetName(), msgBuffer );
+                FileNode::HandleWarningsMSVC( job, objectNode->GetName(), msgBuffer.Get(), msgBuffer.GetLength() );
             }
         }
         else if ( objectNode->IsClang() || objectNode->IsGCC() )
         {
-            if ( objectNode->IsWarningsAsErrorsClangGCC() == false )
+            if ( !objectNode->GetFlag( ObjectNode::FLAG_WARNINGS_AS_ERRORS_CLANGGCC ) )
             {
-                FileNode::HandleWarningsClangGCC( job, objectNode->GetName(), msgBuffer );
+                FileNode::HandleWarningsClangGCC( job, objectNode->GetName(), msgBuffer.Get(), msgBuffer.GetLength() );
             }
         }
     }
     else
     {
-        ((FileNode *)node)->SetStatFlag( Node::STATS_FAILED );
+        ((FileNode *)job->GetNode())->GetStatFlag( Node::STATS_FAILED );
+
+        // failed - build list of errors
+        const AString & nodeName = job->GetNode()->GetName();
+        AStackString< 8192 > failureOutput;
+        failureOutput.Format( "PROBLEM: %s\n", nodeName.Get() );
+        for ( const AString * it = messages.Begin(); it != messages.End(); ++it )
+        {
+            failureOutput += *it;
+        }
 
         // was it a system error?
         if ( systemError )
         {
+            // blacklist misbehaving worker
+            ss->m_Blacklisted = true;
+
+            // take note of failure of job
+            job->OnSystemError();
+
+            // debugging message
+            const size_t workerIndex = (size_t)( ss - m_ServerList.Begin() );
+            const AString & workerName = m_WorkerList[ workerIndex ];
+            DIST_INFO( "Remote System Failure!\n"
+                       " - Blacklisted Worker: %s\n"
+                       " - Node              : %s\n"
+                       " - Job Error Count   : %u / %u\n"
+                       " - Details           :\n"
+                       "%s",
+                       workerName.Get(),
+                       job->GetNode()->GetName().Get(),
+                       job->GetSystemErrorCount(), SYSTEM_ERROR_ATTEMPT_COUNT,
+                       failureOutput.Get()
+                      );
+
             // should we retry on another worker?
-            if ( jobSystemErrorCount < SYSTEM_ERROR_ATTEMPT_COUNT )
+            if ( job->GetSystemErrorCount() < SYSTEM_ERROR_ATTEMPT_COUNT )
             {
                 // re-queue job which will be re-attempted on another worker
                 JobQueue::Get().ReturnUnfinishedDistributableJob( job );
@@ -797,14 +624,28 @@ void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isC
 
             // failed too many times on different workers, add info about this to
             // error output
+            AStackString<> tmp;
+            tmp.Format( "FBuild: Error: Task failed on %u different workers\n", (uint32_t)SYSTEM_ERROR_ATTEMPT_COUNT );
             if ( failureOutput.EndsWith( '\n' ) == false )
             {
                 failureOutput += '\n';
             }
-            failureOutput.AppendFormat( "FBuild: Error: Task failed on %u different workers\n", (uint32_t)SYSTEM_ERROR_ATTEMPT_COUNT );
+            failureOutput += tmp;
         }
 
-        Node::DumpOutput( nullptr, failureOutput, nullptr );
+        Node::DumpOutput( nullptr, failureOutput.Get(), failureOutput.GetLength(), nullptr );
+    }
+
+    if ( FLog::IsMonitorEnabled() )
+    {
+        AStackString<> msgBuffer;
+        job->GetMessagesForMonitorLog( msgBuffer );
+
+        FLOG_MONITOR( "FINISH_JOB %s %s \"%s\" \"%s\"\n",
+                      result ? "SUCCESS" : "ERROR",
+                      ss->m_RemoteName.Get(),
+                      job->GetNode()->GetName().Get(),
+                      msgBuffer.Get() );
     }
 
     JobQueue::Get().FinishedProcessingJob( job, result, true ); // remote job
@@ -814,7 +655,7 @@ void Client::ProcessJobResultCommon( const ConnectionInfo * connection, bool isC
 //------------------------------------------------------------------------------
 void Client::Process( const ConnectionInfo * connection, const Protocol::MsgRequestManifest * msg )
 {
-    PROFILE_SECTION( "MsgRequestManifest" );
+    PROFILE_SECTION( "MsgRequestManifest" )
 
     // find a job associated with this client with this toolId
     const uint64_t toolId = msg->GetToolId();
@@ -841,7 +682,7 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgRequ
 //------------------------------------------------------------------------------
 void Client::Process( const ConnectionInfo * connection, const Protocol::MsgRequestFile * msg )
 {
-    PROFILE_SECTION( "MsgRequestFile" );
+    PROFILE_SECTION( "MsgRequestFile" )
 
     // find a job associated with this client with this toolId
     const uint64_t toolId = msg->GetToolId();
@@ -886,7 +727,7 @@ const ToolManifest * Client::FindManifest( const ConnectionInfo * connection, ui
           it != ss->m_Jobs.End();
           ++it )
     {
-        const Node * n = ( *it )->GetNode()->CastTo< ObjectNode >()->GetCompiler();
+        Node * n = ( *it )->GetNode()->CastTo< ObjectNode >()->GetCompiler();
         const ToolManifest & m = n->CastTo< CompilerNode >()->GetManifest();
         if ( m.GetToolId() == toolId )
         {
@@ -917,7 +758,7 @@ Client::ServerState::ServerState()
     , m_CurrentMessage( nullptr )
     , m_NumJobsAvailable( 0 )
     , m_Jobs( 16, true )
-    , m_Denylisted( false )
+    , m_Blacklisted( false )
 {
     m_DelayTimer.Start( 999.0f );
 }

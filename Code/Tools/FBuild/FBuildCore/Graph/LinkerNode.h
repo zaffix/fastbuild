@@ -10,7 +10,6 @@
 // Forward Declarations
 //------------------------------------------------------------------------------
 class Args;
-enum class ArgsResponseFileMode : uint32_t;
 
 // LinkerNode
 //------------------------------------------------------------------------------
@@ -19,7 +18,7 @@ class LinkerNode : public FileNode
     REFLECT_NODE_DECLARE( LinkerNode )
 public:
     explicit LinkerNode();
-    virtual bool Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function ) override;
+    virtual bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function ) override;
     virtual ~LinkerNode() override;
 
     enum Flag
@@ -53,8 +52,7 @@ protected:
     bool DoPreLinkCleanup() const;
 
     bool BuildArgs( Args & fullArgs ) const;
-    void GetInputFiles( const AString & token, Args & fullArgs ) const;
-    void GetInputFiles( Args & fullArgs, uint32_t startIndex, uint32_t endIndex, const AString & pre, const AString & post ) const;
+    void GetInputFiles( Args & fullArgs, const AString & pre, const AString & post ) const;
     void GetInputFiles( Node * n, Args & fullArgs, const AString & pre, const AString & post ) const;
     void GetAssemblyResourceFiles( Args & fullArgs, const AString & pre, const AString & post ) const;
     void EmitCompilationMessage( const Args & fullArgs ) const;
@@ -64,19 +62,12 @@ protected:
 
     inline const char * GetDLLOrExe() const { return GetFlag( LINK_FLAG_DLL ) ? "DLL" : "Exe"; }
 
-    ArgsResponseFileMode GetResponseFileMode() const;
+    bool CanUseResponseFile() const;
 
     void GetImportLibName( const AString & args, AString & importLibName ) const;
 
-    static bool GetOtherLibraries( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function, const AString & args, Dependencies & otherLibraries, bool msvc );
-    static bool GetOtherLibrary( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function, Dependencies & libs, const AString & path, const AString & lib, bool & found );
-    static bool GetOtherLibrary( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function, Dependencies & libs, const Array< AString > & paths, const AString & lib );
-    static bool GetOtherLibsArg( const char * arg,
-                                 AString & value,
-                                 const AString * & it,
-                                 const AString * const & end,
-                                 bool canonicalizePath,
-                                 bool isMSVC );
+    static bool GetOtherLibraries( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function, const AString & args, Dependencies & otherLibraries, bool msvc );
+    static bool GetOtherLibrary( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function, Dependencies & libs, const AString & path, const AString & lib, bool & found );
     static bool GetOtherLibsArg( const char * arg,
                                  Array< AString > & list,
                                  const AString * & it,
@@ -85,11 +76,11 @@ protected:
                                  bool isMSVC );
 
     static bool DependOnNode( NodeGraph & nodeGraph,
-                              const BFFToken * iter,
+                              const BFFIterator & iter,
                               const Function * function,
                               const AString & nodeName,
                               Dependencies & nodes );
-    static bool DependOnNode( const BFFToken * iter,
+    static bool DependOnNode( const BFFIterator & iter,
                               const Function * function,
                               Node * node,
                               Dependencies & nodes );
@@ -99,18 +90,14 @@ protected:
     AString             m_LinkerOptions;
     AString             m_LinkerType;
     Array< AString >    m_Libraries;
-    Array< AString >    m_Libraries2;
     Array< AString >    m_LinkerAssemblyResources;
     bool                m_LinkerLinkObjects             = false;
-    bool                m_LinkerAllowResponseFile;
-    bool                m_LinkerForceResponseFile;    
     AString             m_LinkerStampExe;
     AString             m_LinkerStampExeArgs;
     Array< AString >    m_PreBuildDependencyNames;
     Array< AString >    m_Environment;
 
     // Internal State
-    uint32_t            m_Libraries2StartIndex          = 0;
     uint32_t            m_Flags                         = 0;
     uint32_t            m_AssemblyResourcesStartIndex   = 0;
     uint32_t            m_AssemblyResourcesNum          = 0;

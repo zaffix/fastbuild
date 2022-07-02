@@ -32,9 +32,9 @@
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-OSListView::OSListView( OSWindow * parentWindow )
-    : OSWidget( parentWindow )
-    , m_Font( nullptr )
+OSListView::OSListView( OSWindow * parentWindow ) :
+    OSWidget( parentWindow ),
+    m_Font( nullptr )
 {
 }
 
@@ -102,7 +102,7 @@ void OSListView::SetItemCount( uint32_t itemCount )
     #if defined( __WINDOWS__ )
         SendMessage( (HWND)m_Handle, LVM_SETITEMCOUNT, (WPARAM)itemCount, (LPARAM)0 );
     #else
-        (void)itemCount;
+       (void)itemCount;
     #endif
 }
 
@@ -135,7 +135,7 @@ void OSListView::SetItemText( uint32_t index, uint32_t subItemIndex, const char 
         item.iItem = (int32_t)index;
 
         // host name
-        item.pszText = (LPSTR)const_cast<char *>(text);
+        item.pszText = (LPSTR)text;
         item.iSubItem = (int32_t)subItemIndex;
         SendMessage( (HWND)m_Handle, LVM_SETITEM, (WPARAM)0, (LPARAM)&item );
     #elif defined( __OSX__ )

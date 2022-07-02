@@ -27,7 +27,7 @@
     // GlobalData
     //------------------------------------------------------------------------------
     class LeakDumper { public: ~LeakDumper() { MemTracker::DumpAllocations(); } };
-    #if defined( __WINDOWS__ ) && !defined( __clang__ )
+    #if defined( __WINDOWS__ )
         static LeakDumper g_LeakDumper;
     #else
         static LeakDumper g_LeakDumper __attribute__((init_priority(101)));
@@ -48,6 +48,7 @@
     THREAD_LOCAL uint32_t       g_MemTrackerDisabledOnThisThread( 0 );
 
     // Defines
+    #define ALLOCATION_MINIMUM_ALIGN    ( 0x4 )         // assume at least 4 byte alignment
     #define ALLOCATION_HASH_SHIFT       ( 0x2 )         // shift off lower bits
     #define ALLOCATION_HASH_SIZE        ( 0x100000 )    // one megabyte
     #define ALLOCATION_HASH_MASK        ( 0x0FFFFF )    // mask off upper bits
@@ -79,7 +80,7 @@
         {
             MutexHolder mh( GetMutex() );
 
-            Allocation * a = (Allocation *)s_Allocations->Alloc();
+            Allocation * a = (Allocation *)s_Allocations->Alloc( sizeof( Allocation ) );
             ++s_AllocationCount;
 
             a->m_Id = ++s_Id;
@@ -205,9 +206,9 @@
             Allocation * a = s_AllocationHashTable[ i ];
             while ( a )
             {
-                const uint32_t id     = a->m_Id;
-                const uint64_t addr   = (size_t)a->m_Ptr;
-                const uint64_t size   = a->m_Size;
+                uint32_t id     = a->m_Id;
+                uint64_t addr   = (size_t)a->m_Ptr;
+                uint64_t size   = a->m_Size;
 
                 // format a view of the memory contents
                 const char * src = (const char *)addr;

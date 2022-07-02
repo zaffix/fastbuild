@@ -35,8 +35,8 @@ MemPoolBlock::~MemPoolBlock()
     #endif
 
     // free pages
-    const void * const * end = m_Pages.End();
-    for ( void ** it = m_Pages.Begin(); it != end; ++it )
+    void ** end = m_Pages.End();
+    for ( void ** it=m_Pages.Begin(); it != end; ++it )
     {
         void * page = *it;
         FREE( page );
@@ -45,8 +45,11 @@ MemPoolBlock::~MemPoolBlock()
 
 // Alloc
 //------------------------------------------------------------------------------
-void * MemPoolBlock::Alloc()
+void * MemPoolBlock::Alloc( size_t size )
 {
+    // Only permitted to call with supported sizes
+    ASSERT( size <= m_BlockSize ); (void)size;
+
     if ( m_FreeBlockChain == nullptr )
     {
         if ( AllocPage() == false )
@@ -113,14 +116,14 @@ NO_INLINE bool MemPoolBlock::AllocPage()
     // build chain into new blocks
     FreeBlock * block = reinterpret_cast< FreeBlock * >( (size_t)newPage );
     FreeBlock * const firstBlock = block;
-    for ( size_t i = 0; i < ( numBlocksInPage - 1 ); ++i )
+    for ( size_t i=0; i<( numBlocksInPage - 1 ); ++i )
     {
         FreeBlock * next = reinterpret_cast< FreeBlock * >( (size_t)block + alignedSize );
         block->m_Next = next;
         block = next;
     }
 
-    // hook last block into main chain
+    // hook last block into master chain
     block->m_Next = m_FreeBlockChain;
     m_FreeBlockChain = firstBlock;
 

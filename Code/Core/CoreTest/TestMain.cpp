@@ -7,7 +7,7 @@
 
 // main
 //------------------------------------------------------------------------------
-int main( int, char *[] )
+int main(int , char * [])
 {
     // Tests to run
     REGISTER_TESTGROUP( TestArray )
@@ -28,7 +28,6 @@ int main( int, char *[] )
     REGISTER_TESTGROUP( TestSystemMutex )
     REGISTER_TESTGROUP( TestTestTCPConnectionPool )
     REGISTER_TESTGROUP( TestTimer )
-    REGISTER_TESTGROUP( TestUnorderedMap )
 
     UnitTestManager utm;
 

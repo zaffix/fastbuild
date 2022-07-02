@@ -15,6 +15,7 @@
 
 // Forward Declarations
 //------------------------------------------------------------------------------
+class BFFIterator;
 class Function;
 
 // XCodeProjectConfig
@@ -26,11 +27,10 @@ public:
     AString             m_Target;
     AString             m_XCodeBaseSDK;
     AString             m_XCodeDebugWorkingDir;
-    AString             m_XCodeIphoneOSDeploymentTarget;
 
     static bool ResolveTargets( NodeGraph & nodeGraph,
                                 Array< XCodeProjectConfig > & configs,
-                                const BFFToken * iter = nullptr,
+                                const BFFIterator * iter = nullptr,
                                 const Function * function = nullptr );
 };
 
@@ -41,12 +41,13 @@ class XCodeProjectNode : public FileNode
     REFLECT_NODE_DECLARE( XCodeProjectNode )
 public:
     explicit XCodeProjectNode();
-    virtual bool Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function ) override;
+    virtual bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function ) override;
     virtual ~XCodeProjectNode() override;
 
     static inline Node::Type GetTypeS() { return Node::XCODEPROJECT_NODE; }
 
 private:
+    virtual bool DetermineNeedToBuild( bool forceClean ) const override;
     virtual BuildResult DoBuild( Job * job ) override;
     virtual void PostLoad( NodeGraph & nodeGraph ) override;
 

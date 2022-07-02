@@ -28,13 +28,12 @@ REFLECT_NODE_BEGIN( TestNode, Node, MetaName( "TestOutput" ) + MetaFile() )
     REFLECT(        m_TestInputPathRecurse,     "TestInputPathRecurse",     MetaOptional() )
     REFLECT_ARRAY(  m_TestInputExcludePath,     "TestInputExcludePath",     MetaOptional() + MetaPath() )
     REFLECT_ARRAY(  m_TestInputExcludedFiles,   "TestInputExcludedFiles",   MetaOptional() + MetaFile( true ) )
-    REFLECT_ARRAY(  m_TestInputExcludePattern,  "TestInputExcludePattern",  MetaOptional() + MetaFile( true ) )
+    REFLECT_ARRAY(  m_TestInputExcludePattern,  "TestInputExcludePattern",  MetaOptional() )
     REFLECT(        m_TestArguments,            "TestArguments",            MetaOptional() )
     REFLECT(        m_TestWorkingDir,           "TestWorkingDir",           MetaOptional() + MetaPath() )
     REFLECT(        m_TestTimeOut,              "TestTimeOut",              MetaOptional() + MetaRange( 0, 4 * 60 * 60 ) ) // 4hrs
     REFLECT(        m_TestAlwaysShowOutput,     "TestAlwaysShowOutput",     MetaOptional() )
     REFLECT_ARRAY(  m_PreBuildDependencyNames,  "PreBuildDependencies",     MetaOptional() + MetaFile() + MetaAllowNonFile() )
-    REFLECT_ARRAY(  m_Environment,              "Environment",              MetaOptional() )
 
     // Internal State
     REFLECT(        m_NumTestInputFiles,        "NumTestInputFiles",        MetaHidden() )
@@ -51,14 +50,13 @@ TestNode::TestNode()
     , m_TestAlwaysShowOutput( false )
     , m_TestInputPathRecurse( true )
     , m_NumTestInputFiles( 0 )
-    , m_EnvironmentString( nullptr )
 {
     m_Type = Node::TEST_NODE;
 }
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool TestNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool TestNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .PreBuildDependencies
     if ( !InitializePreBuildDependencies( nodeGraph, iter, function, m_PreBuildDependencyNames ) )
@@ -92,7 +90,6 @@ TestNode::TestNode()
                                               m_TestInputExcludedFiles,
                                               m_TestInputExcludePattern,
                                               m_TestInputPathRecurse,
-                                              false, // Don't include read-only status in hash
                                               &m_TestInputPattern,
                                               "TestInputPath",
                                               testInputPaths ) )
@@ -112,21 +109,11 @@ TestNode::TestNode()
 
 // DESTRUCTOR
 //------------------------------------------------------------------------------
-TestNode::~TestNode()
-{
-    FREE( (void *)m_EnvironmentString );
-}
-
-// GetEnvironmentString
-//------------------------------------------------------------------------------
-const char * TestNode::GetEnvironmentString() const
-{
-    return Node::GetEnvironmentString( m_Environment, m_EnvironmentString );
-}
+TestNode::~TestNode() = default;
 
 // DoDynamicDependencies
 //------------------------------------------------------------------------------
-/*virtual*/ bool TestNode::DoDynamicDependencies( NodeGraph & nodeGraph, bool /*forceClean*/ )
+/*virtual*/ bool TestNode::DoDynamicDependencies( NodeGraph & nodeGraph, bool UNUSED( forceClean ) )
 {
     // clear dynamic deps from previous passes
     m_DynamicDependencies.Clear();
@@ -136,12 +123,12 @@ const char * TestNode::GetEnvironmentString() const
     const size_t endIndex =  ( 1 + m_NumTestInputFiles + m_TestInputPath.GetSize() );
     for ( size_t i=startIndex; i<endIndex; ++i )
     {
-        const Node * n = m_StaticDependencies[ i ].GetNode();
+        Node * n = m_StaticDependencies[ i ].GetNode();
 
         ASSERT( n->GetType() == Node::DIRECTORY_LIST_NODE );
 
         // get the list of files
-        const DirectoryListNode * dln = n->CastTo< DirectoryListNode >();
+        DirectoryListNode * dln = n->CastTo< DirectoryListNode >();
         const Array< FileIO::FileInfo > & files = dln->GetFiles();
         m_DynamicDependencies.SetCapacity( m_DynamicDependencies.GetSize() + files.GetSize() );
         for ( const FileIO::FileInfo & file : files )
@@ -158,7 +145,7 @@ const char * TestNode::GetEnvironmentString() const
                 return false;
             }
 
-            m_DynamicDependencies.EmplaceBack( sn );
+            m_DynamicDependencies.Append( Dependency( sn ) );
         }
         continue;
     }
@@ -177,12 +164,10 @@ const char * TestNode::GetEnvironmentString() const
 
     // spawn the process
     Process p( FBuild::Get().GetAbortBuildPointer() );
-    const char * environmentString = GetEnvironmentString();
-
     bool spawnOK = p.Spawn( GetTestExecutable()->GetName().Get(),
                             m_TestArguments.Get(),
                             workingDir,
-                            environmentString );
+                            FBuild::Get().GetEnvironmentString() );
 
     if ( !spawnOK )
     {
@@ -196,9 +181,11 @@ const char * TestNode::GetEnvironmentString() const
     }
 
     // capture all of the stdout and stderr
-    AString memOut;
-    AString memErr;
-    bool timedOut = !p.ReadAllData( memOut, memErr, m_TestTimeOut * 1000 );
+    AutoPtr< char > memOut;
+    AutoPtr< char > memErr;
+    uint32_t memOutSize = 0;
+    uint32_t memErrSize = 0;
+    bool timedOut = !p.ReadAllData( memOut, &memOutSize, memErr, &memErrSize, m_TestTimeOut * 1000 );
 
     // Get result
     int result = p.WaitForExit();
@@ -210,8 +197,8 @@ const char * TestNode::GetEnvironmentString() const
     if ( ( timedOut == true ) || ( result != 0 ) || ( m_TestAlwaysShowOutput == true ) )
     {
         // something went wrong, print details
-        Node::DumpOutput( job, memOut );
-        Node::DumpOutput( job, memErr );
+        Node::DumpOutput( job, memOut.Get(), memOutSize );
+        Node::DumpOutput( job, memErr.Get(), memErrSize );
     }
 
     if ( timedOut == true )
@@ -230,8 +217,8 @@ const char * TestNode::GetEnvironmentString() const
         FLOG_ERROR( "Failed to open test output file '%s'", GetName().Get() );
         return NODE_RESULT_FAILED;
     }
-    if ( ( ( memOut.IsEmpty() == false ) && ( fs.Write( memOut.Get(), memOut.GetLength() ) != memOut.GetLength() ) ) ||
-         ( ( memErr.IsEmpty() == false ) && ( fs.Write( memErr.Get(), memErr.GetLength() ) != memErr.GetLength() ) ) )
+    if ( ( memOut.Get() && ( fs.Write( memOut.Get(), memOutSize ) != memOutSize ) ) ||
+         ( memErr.Get() && ( fs.Write( memErr.Get(), memErrSize ) != memErrSize ) ) )
     {
         FLOG_ERROR( "Failed to write test output file '%s'", GetName().Get() );
         return NODE_RESULT_FAILED;
@@ -257,13 +244,10 @@ const char * TestNode::GetEnvironmentString() const
 void TestNode::EmitCompilationMessage( const char * workingDir ) const
 {
     AStackString<> output;
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        output += "Running Test: ";
-        output += GetName();
-        output += '\n';
-    }
-    if ( FBuild::Get().GetOptions().m_ShowCommandLines )
+    output += "Running Test: ";
+    output += GetName();
+    output += '\n';
+    if ( FLog::ShowInfo() || FBuild::Get().GetOptions().m_ShowCommandLines )
     {
         output += GetTestExecutable()->GetName();
         output += ' ';
@@ -276,7 +260,7 @@ void TestNode::EmitCompilationMessage( const char * workingDir ) const
             output += '\n';
         }
     }
-    FLOG_OUTPUT( output );
+    FLOG_BUILD_DIRECT( output.Get() );
 }
 
 //------------------------------------------------------------------------------

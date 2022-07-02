@@ -19,12 +19,7 @@ public:
     explicit CachePlugin( const AString & dllName );
     virtual ~CachePlugin() override;
 
-    virtual bool Init( const AString & cachePath,
-                       const AString & cachePathMountPoint,
-                       bool cacheRead,
-                       bool cacheWrite,
-                       bool cacheVerbose,
-                       const AString & pluginDLLConfig ) override;
+    virtual bool Init( const AString & cachePath, const AString & cachePathMountPoint ) override;
     virtual void Shutdown() override;
     virtual bool Publish( const AString & cacheId, const void * data, size_t dataSize ) override;
     virtual bool Retrieve( const AString & cacheId, void * & data, size_t & dataSize ) override;
@@ -32,14 +27,10 @@ public:
     virtual bool OutputInfo( bool showProgress ) override;
     virtual bool Trim( bool showProgress, uint32_t sizeMiB ) override;
 private:
-    void * GetFunction( const char * friendlyName, const char * mangledName = nullptr, bool optional = false );
-
-    static void CacheOutputWrapper( const char * message );
+    void * GetFunction( const char * friendlyName, const char * mangledName = nullptr, bool optional = false ) const;
 
     void *              m_DLL;
-    bool                m_Valid;
     CacheInitFunc       m_InitFunc;
-    CacheInitExFunc     m_InitExFunc;
     CacheShutdownFunc   m_ShutdownFunc;
     CachePublishFunc    m_PublishFunc;
     CacheRetrieveFunc   m_RetrieveFunc;

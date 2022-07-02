@@ -9,7 +9,7 @@
 
 // Forward Declarations
 //------------------------------------------------------------------------------
-class BFFToken;
+class BFFIterator;
 
 // Helpers
 //------------------------------------------------------------------------------
@@ -35,8 +35,8 @@ public:
     const Array< AString > & GetArrayOfStrings() const { ASSERT( IsArrayOfStrings() ); return m_ArrayValues; }
     int32_t GetInt() const { ASSERT( IsInt() ); return m_IntValue; }
     bool GetBool() const { ASSERT( IsBool() ); return m_BoolValue; }
-    const Array< const BFFVariable * > & GetStructMembers() const { ASSERT( IsStruct() ); RETURN_CONSTIFIED_BFF_VARIABLE_ARRAY( m_SubVariables ) }
-    const Array< const BFFVariable * > & GetArrayOfStructs() const { ASSERT( IsArrayOfStructs() ); RETURN_CONSTIFIED_BFF_VARIABLE_ARRAY( m_SubVariables ) }
+    const Array< const BFFVariable * > & GetStructMembers() const { ASSERT( IsStruct() ); RETURN_CONSTIFIED_BFF_VARIABLE_ARRAY( m_SubVariables ); }
+    const Array< const BFFVariable * > & GetArrayOfStructs() const { ASSERT( IsArrayOfStructs() ); RETURN_CONSTIFIED_BFF_VARIABLE_ARRAY( m_SubVariables ); }
 
     enum VarType : uint8_t
     {
@@ -64,7 +64,7 @@ public:
     inline void Freeze() const { ++m_FreezeCount; }
     inline void Unfreeze() const { ASSERT( m_FreezeCount != 0 ); --m_FreezeCount; }
 
-    BFFVariable * ConcatVarsRecurse( const AString & dstName, const BFFVariable & other, const BFFToken * operatorIter ) const;
+    BFFVariable * ConcatVarsRecurse( const AString & dstName, const BFFVariable & other, const BFFIterator & operatorIter ) const;
 
     static const BFFVariable ** GetMemberByName( const AString & name, const Array< const BFFVariable * > & members );
 

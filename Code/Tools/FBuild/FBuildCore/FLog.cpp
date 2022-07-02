@@ -35,8 +35,8 @@
 
 // Static Data
 //------------------------------------------------------------------------------
-/*static*/ bool FLog::s_ShowVerbose = false;
-/*static*/ bool FLog::s_ShowBuildReason = false;
+/*static*/ bool FLog::s_ShowInfo = false;
+/*static*/ bool FLog::s_ShowBuildCommands = true;
 /*static*/ bool FLog::s_ShowErrors = true;
 /*static*/ bool FLog::s_ShowProgress = false;
 /*static*/ bool FLog::s_MonitorEnabled = false;
@@ -52,7 +52,7 @@ static FileStream * g_MonitorFileStream = nullptr;
 
 // Info
 //------------------------------------------------------------------------------
-/*static*/ void FLog::Verbose( MSVC_SAL_PRINTF const char * formatString, ... )
+/*static*/ void FLog::Info( MSVC_SAL_PRINTF const char * formatString, ... )
 {
     AStackString< 8192 > buffer;
 
@@ -61,12 +61,12 @@ static FileStream * g_MonitorFileStream = nullptr;
     buffer.VFormat( formatString, args );
     va_end( args );
 
-    OutputInternal( "Info:", buffer.Get() );
+    Output( "Info:", buffer.Get() );
 }
 
-// Output
+// Build
 //------------------------------------------------------------------------------
-/*static*/ void FLog::Output( MSVC_SAL_PRINTF const char * formatString, ... )
+/*static*/ void FLog::Build( MSVC_SAL_PRINTF const char * formatString, ... )
 {
     AStackString< 8192 > buffer;
 
@@ -74,11 +74,6 @@ static FileStream * g_MonitorFileStream = nullptr;
     va_start(args, formatString);
     buffer.VFormat( formatString, args );
     va_end( args );
-
-    if ( buffer.IsEmpty() ) // Ignore empty messages for caller convenience
-    {
-        return;
-    }
 
     Tracing::Output( buffer.Get() );
 }
@@ -93,7 +88,7 @@ static FileStream * g_MonitorFileStream = nullptr;
         return; // No - nothing to do
     }
 
-    PROFILE_SECTION( "FLog::Monitor" );
+    PROFILE_SECTION( "FLog::Monitor" )
 
     AStackString< 1024 > buffer;
     va_list args;
@@ -108,16 +103,11 @@ static FileStream * g_MonitorFileStream = nullptr;
     g_MonitorFileStream->WriteBuffer( finalBuffer.Get(), finalBuffer.GetLength() );
 }
 
-// Output
+// BuildDirect
 //------------------------------------------------------------------------------
-/*static*/ void FLog::Output( const AString & message )
+/*static*/ void FLog::BuildDirect( const char * message )
 {
-    if ( message.IsEmpty() ) // Ignore empty messages for caller convenience
-    {
-        return;
-    }
-
-    Tracing::Output( message.Get() );
+    Tracing::Output( message );
 }
 
 // Warning
@@ -131,7 +121,7 @@ static FileStream * g_MonitorFileStream = nullptr;
     buffer.VFormat( formatString, args );
     va_end( args );
 
-    OutputInternal( "Warning:", buffer.Get() );
+    Output( "Warning:", buffer.Get() );
 }
 
 // Error
@@ -153,7 +143,7 @@ static FileStream * g_MonitorFileStream = nullptr;
     buffer.VFormat( formatString, args );
     va_end( args );
 
-    OutputInternal( "Error:", buffer.Get() );
+    Output( "Error:", buffer.Get() );
 }
 
 // ErrorDirect
@@ -170,9 +160,9 @@ static FileStream * g_MonitorFileStream = nullptr;
 
 // Output - write to stdout and debugger
 //------------------------------------------------------------------------------
-/*static*/ void FLog::OutputInternal( const char * type, const char * message )
+/*static*/ void FLog::Output( const char * type, const char * message )
 {
-    if ( type == nullptr )
+    if( type == nullptr )
     {
         OUTPUT( "%s", message );
         return;
@@ -263,13 +253,13 @@ static FileStream * g_MonitorFileStream = nullptr;
                                       uint32_t numJobsDist,
                                       uint32_t numJobsDistActive )
 {
-    PROFILE_FUNCTION;
+    PROFILE_FUNCTION
 
     ASSERT( s_ShowProgress );
 
     // format progress % (we know it never goes above 99.9%)
     uint32_t intPerc = (uint32_t)( percentage * 10.0f ); // 0 to 999
-    const uint32_t hundreds = ( intPerc / 100 ); intPerc -= ( hundreds * 100 );
+    uint32_t hundreds = ( intPerc / 100 ); intPerc -= ( hundreds * 100 );
     uint32_t tens = ( intPerc / 10 ); intPerc -= ( tens * 10 );
     uint32_t ones = intPerc;
     m_ProgressText = g_OutputString;
@@ -278,15 +268,15 @@ static FileStream * g_MonitorFileStream = nullptr;
     m_ProgressText[ 4 ] = '0' + (char)ones;
 
     // 20 column output (100/20 = 5% per char)
-    const uint32_t numStarsDone = (uint32_t)( percentage * 20.0f / 100.0f ); // 20 columns
+    uint32_t numStarsDone = (uint32_t)( percentage * 20.0f / 100.0f ); // 20 columns
     for ( uint32_t i=0; i<20; ++i )
     {
         m_ProgressText[ 9 + i ] = ( i < numStarsDone ) ? '*' : '-';
     }
 
     // time " [%um] %02us"
-    const uint32_t timeTakenMinutes = uint32_t( time / 60.0f );
-    const uint32_t timeTakenSeconds = (uint32_t)time - ( timeTakenMinutes * 60 );
+    uint32_t timeTakenMinutes = uint32_t( time / 60.0f );
+    uint32_t timeTakenSeconds = (uint32_t)time - ( timeTakenMinutes * 60 );
     if ( timeTakenMinutes > 0 )
     {
         char buffer[ 8 ];
@@ -350,7 +340,7 @@ static FileStream * g_MonitorFileStream = nullptr;
 //------------------------------------------------------------------------------
 /*static*/ bool FLog::TracingOutputCallback( const char * message )
 {
-    const uint32_t threadIndex = WorkerThread::GetThreadIndex();
+    uint32_t threadIndex = WorkerThread::GetThreadIndex();
 
     AStackString< 2048 > tmp;
 

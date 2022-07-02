@@ -10,17 +10,15 @@
 #include "Tools/FBuild/FBuildCore/FLog.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 #include "Tools/FBuild/FBuildCore/Graph/VCXProjectNode.h"
-#include "Tools/FBuild/FBuildCore/Graph/VSProjectBaseNode.h"
-#include "Tools/FBuild/FBuildCore/Graph/VSProjectExternalNode.h"
 #include "Tools/FBuild/FBuildCore/Helpers/SLNGenerator.h"
 #include "Tools/FBuild/FBuildCore/Helpers/VSProjectGenerator.h"
 
 // Core
-#include "Core/Containers/UniquePtr.h"
 #include "Core/Env/ErrorFormat.h"
+#include "Core/FileIO/FileIO.h"
 #include "Core/FileIO/FileStream.h"
 #include "Core/FileIO/PathUtils.h"
-#include "Core/Math/xxHash.h"
+#include "Core/Process/Process.h"
 #include "Core/Strings/AStackString.h"
 
 // system
@@ -42,8 +40,7 @@ REFLECT_END( SolutionConfig )
 
 REFLECT_STRUCT_BEGIN_BASE( SolutionFolder )
     REFLECT(        m_Path,                                 "Path",                                     MetaNone() )
-    REFLECT_ARRAY(  m_Projects,                             "Projects",                                 MetaOptional() + MetaFile() )
-    REFLECT_ARRAY(  m_Items,                                "Items",                                    MetaOptional() + MetaFile() )
+    REFLECT_ARRAY(  m_Projects,                             "Projects",                                 MetaFile() )
 REFLECT_END( SolutionFolder )
 
 REFLECT_STRUCT_BEGIN_BASE( SolutionDependency )
@@ -67,7 +64,7 @@ REFLECT_END( SLNNode )
 //------------------------------------------------------------------------------
 struct VCXProjectNodeComp
 {
-    bool operator ()( const VSProjectBaseNode * a, const VSProjectBaseNode * b ) const
+    bool operator ()( const VCXProjectNode * a, const VCXProjectNode * b ) const
     {
         return ( a->GetName() < b->GetName() );
     }
@@ -76,7 +73,7 @@ struct VCXProjectNodeComp
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
 SLNNode::SLNNode()
-    : FileNode( AString::GetEmpty(), Node::FLAG_ALWAYS_BUILD )
+    : FileNode( AString::GetEmpty(), Node::FLAG_NONE )
 {
     m_LastBuildTimeMs = 100; // higher default than a file node
     m_Type = Node::SLN_NODE;
@@ -84,7 +81,7 @@ SLNNode::SLNNode()
 
 // Initialize
 //------------------------------------------------------------------------------
-/*virtual*/ bool SLNNode::Initialize( NodeGraph & nodeGraph, const BFFToken * iter, const Function * function )
+/*virtual*/ bool SLNNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // Solution Configs
     //------------------------------------------------------------------------------
@@ -163,21 +160,18 @@ SLNNode::SLNNode()
         {
             // Merge list of projects
             found->m_Projects.Append( folder.m_Projects );
-            
-            // Merge list of items
-            found->m_Items.Append( folder.m_Items );
         }
         else
         {
             // Add new entry
-            collapsedFolders.EmplaceBack( folder );
+            collapsedFolders.Append( SolutionFolder( folder ) );
         }
     }
     m_SolutionFolders.Swap( collapsedFolders );
 
     // Gather all Project references and canonicalize project names
     //------------------------------------------------------------------------------
-    Array< VSProjectBaseNode * > projects( m_SolutionProjects.GetSize(), true );
+    Array< VCXProjectNode * > projects( m_SolutionProjects.GetSize(), true );
     // SolutionProjects
     if ( !GatherProjects( nodeGraph, function, iter, ".SolutionProjects", m_SolutionProjects, projects ) )
     {
@@ -225,13 +219,13 @@ SLNNode::SLNNode()
 
     // Check Project Configurations
     //------------------------------------------------------------------------------
-    for ( const VSProjectBaseNode * project : projects )
+    for ( const VCXProjectNode * project : projects )
     {
         // check that this Project contains all .SolutionConfigs
         for ( const SolutionConfig & solutionConfig : m_SolutionConfigs )
         {
             bool containsConfig = false;
-            for ( const VSProjectPlatformConfigTuple & projectConfig : project->GetPlatformConfigTuples() )
+            for ( const VSProjectConfig & projectConfig : project->GetConfigs() )
             {
                 if ( ( projectConfig.m_Platform == solutionConfig.m_Platform ) &&
                      ( projectConfig.m_Config == solutionConfig.m_Config ) )
@@ -255,9 +249,9 @@ SLNNode::SLNNode()
     // Manage dependencies
     //------------------------------------------------------------------------------
     m_StaticDependencies.SetCapacity( projects.GetSize() );
-    for ( VSProjectBaseNode * project : projects )
+    for ( VCXProjectNode * project : projects )
     {
-        m_StaticDependencies.EmplaceBack( project );
+        m_StaticDependencies.Append( Dependency( project ) );
     }
 
     return true;
@@ -267,22 +261,26 @@ SLNNode::SLNNode()
 //------------------------------------------------------------------------------
 SLNNode::~SLNNode() = default;
 
+// DetermineNeedToBuild
+//------------------------------------------------------------------------------
+/*virtual*/ bool SLNNode::DetermineNeedToBuild( bool /*forceClean*/ ) const
+{
+    // SLNNode always builds, but only writes the result if different
+    return true;
+}
+
 // DoBuild
 //------------------------------------------------------------------------------
-/*virtual*/ Node::BuildResult SLNNode::DoBuild( Job * /*job*/ )
+/*virtual*/ Node::BuildResult SLNNode::DoBuild( Job * UNUSED( job ) )
 {
     SLNGenerator sg;
 
     // projects
-    Array< VSProjectBaseNode * > projects( m_StaticDependencies.GetSize(), false );
-    for ( Dependency & dep : m_StaticDependencies )
+    Array< VCXProjectNode * > projects( m_StaticDependencies.GetSize(), false );
+    const Dependency * const end = m_StaticDependencies.End();
+    for ( const Dependency * it = m_StaticDependencies.Begin() ; it != end ; ++it )
     {
-        const Node * node = dep.GetNode();
-        VSProjectBaseNode * projectNode = ( node->GetType() == Node::VCXPROJECT_NODE )
-                                        ? static_cast< VSProjectBaseNode * >( node->CastTo< VCXProjectNode >() )
-                                        : static_cast< VSProjectBaseNode * >( node->CastTo< VSProjectExternalNode >() );
-
-        projects.Append( projectNode );
+        projects.Append( it->GetNode()->CastTo< VCXProjectNode >() );
     }
 
     // .sln solution file
@@ -297,9 +295,6 @@ SLNNode::~SLNNode() = default;
     {
         return NODE_RESULT_FAILED; // Save will have emitted an error
     }
-
-    // Record stamp representing the contents of the files
-    m_Stamp = xxHash::Calc64( sln );
 
     return NODE_RESULT_OK;
 }
@@ -330,7 +325,7 @@ bool SLNNode::Save( const AString & content, const AString & fileName ) const
         else
         {
             // check content
-            UniquePtr< char > mem( ( char *)ALLOC( oldFileSize ) );
+            AutoPtr< char > mem( ( char *)ALLOC( oldFileSize ) );
             if ( old.Read( mem.Get(), oldFileSize ) != oldFileSize )
             {
                 FLOG_ERROR( "SLN - Failed to read '%s'", fileName.Get() );
@@ -354,10 +349,7 @@ bool SLNNode::Save( const AString & content, const AString & fileName ) const
         return true; // nothing to do.
     }
 
-    if ( FBuild::Get().GetOptions().m_ShowCommandSummary )
-    {
-        FLOG_OUTPUT( "SLN: %s\n", fileName.Get() );
-    }
+    FLOG_BUILD( "SLN: %s\n", fileName.Get() );
 
     // actually write
     FileStream f;
@@ -380,28 +372,25 @@ bool SLNNode::Save( const AString & content, const AString & fileName ) const
 //------------------------------------------------------------------------------
 bool SLNNode::GatherProject( NodeGraph & nodeGraph,
                              const Function * function,
-                             const BFFToken * iter,
+                             const BFFIterator & iter,
                              const char * propertyName,
                              const AString & projectName,
-                             Array< VSProjectBaseNode * > & inOutProjects ) const
+                             Array< VCXProjectNode * > & inOutProjects ) const
 {
     // Get associated project file
-    const Node * node = nodeGraph.FindNode( projectName );
+    Node * node = nodeGraph.FindNode( projectName );
     if ( node == nullptr )
     {
         Error::Error_1104_TargetNotDefined( iter, function, propertyName, projectName );
-        return false;
+        return nullptr;
     }
-    if ( ( node->GetType() != Node::VCXPROJECT_NODE ) &&
-         ( node->GetType() != Node::VSPROJEXTERNAL_NODE ) )
+    if ( node->GetType() != Node::VCXPROJECT_NODE )
     {
         // don't know how to handle this type of node
         Error::Error_1005_UnsupportedNodeType( iter, function, propertyName, node->GetName(), node->GetType() );
-        return false;
+        return nullptr;
     }
-    VSProjectBaseNode * projectNode = ( node->GetType() == Node::VCXPROJECT_NODE )
-                                    ? static_cast< VSProjectBaseNode * >( node->CastTo< VCXProjectNode >() )
-                                    : static_cast< VSProjectBaseNode * >( node->CastTo< VSProjectExternalNode >() );
+    VCXProjectNode * projectNode = node->CastTo< VCXProjectNode >();
 
     // Add to project list if not already there
     if ( inOutProjects.Find( projectNode ) == nullptr )
@@ -416,10 +405,10 @@ bool SLNNode::GatherProject( NodeGraph & nodeGraph,
 //------------------------------------------------------------------------------
 bool SLNNode::GatherProjects( NodeGraph & nodeGraph,
                               const Function * function,
-                              const BFFToken * iter,
+                              const BFFIterator & iter,
                               const char * propertyName,
                               const Array< AString > & projectNames,
-                              Array< VSProjectBaseNode * > & inOutProjects ) const
+                              Array< VCXProjectNode * > & inOutProjects ) const
 {
     for ( const AString & projectName : projectNames )
     {

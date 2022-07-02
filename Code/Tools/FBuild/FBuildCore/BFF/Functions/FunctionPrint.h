@@ -20,10 +20,11 @@ protected:
     virtual bool NeedsBody() const override;
 
     virtual bool ParseFunction( NodeGraph & nodeGraph,
-                                BFFParser & parser,
-                                const BFFToken * functionNameStart,
-                                const BFFTokenRange & headerRange,
-                                const BFFTokenRange & bodyRange ) const override;
+                                const BFFIterator & functionNameStart,
+                                const BFFIterator * functionBodyStartToken,
+                                const BFFIterator * functionBodyStopToken,
+                                const BFFIterator * functionHeaderStartToken,
+                                const BFFIterator * functionHeaderStopToken ) const override;
 
     static void PrintVarRecurse( const BFFVariable & var, uint32_t indent );
 };

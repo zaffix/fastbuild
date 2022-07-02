@@ -31,7 +31,6 @@
 
             // Extra Compiler Options
             .CompilerOptions            + .LZ4IncludePaths
-            .CompilerOptions            + ' "-I../External/VSProjTypeExtractor"'
 
             // Output
             .CompilerOutputPath         = '$OutputBase$/$ProjectPath$/'
@@ -52,13 +51,17 @@
 
     // Aliases
     //--------------------------------------------------------------------------
-    CreateCommonAliases( .ProjectName )
+    #include "../../../gen_default_aliases.bff"
 
     // Visual Studio Project Generation
     //--------------------------------------------------------------------------
     #if __WINDOWS__
-        .ExtraOptions = []
-        CreateVCXProject_Lib( .ProjectName, .ProjectPath, .ProjectConfigs, .ExtraOptions )
+        VCXProject( '$ProjectName$-proj' )
+        {
+            .ProjectOutput              = '../tmp/VisualStudio/Projects/$ProjectName$.vcxproj'
+            .ProjectInputPaths          = '$ProjectPath$\'
+            .ProjectBasePath            = '$ProjectPath$\'
+        }
     #endif
 
     // XCode Project Generation

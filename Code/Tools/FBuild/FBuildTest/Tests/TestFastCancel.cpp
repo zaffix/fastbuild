@@ -41,7 +41,7 @@ static uint32_t CancelHelperThread( void * )
     SystemMutex mutex2( "FASTBuildFastCancelTest2" );
     SystemMutex mutex3( "FASTBuildFastCancelTest3" );
     SystemMutex mutex4( "FASTBuildFastCancelTest4" );
-    SystemMutex * mutexes[] = { &mutex1, &mutex2, &mutex3, &mutex4 };
+    SystemMutex* mutexes[] = { &mutex1, &mutex2, &mutex3, &mutex4 };
     for ( SystemMutex * mutex : mutexes )
     {
         // if we acquired the lock, the child process is not yet spawned
@@ -71,6 +71,7 @@ void TestFastCancel::Cancel() const
     options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestFastCancel/Cancel/fbuild.bff";
     options.m_ForceCleanBuild = true;
     options.m_EnableMonitor = true; // make sure monitor code paths are tested as well
+    options.m_FastCancel = true;
 
     // Init
     FBuild fBuild( options );
@@ -81,14 +82,14 @@ void TestFastCancel::Cancel() const
     SystemMutex mutex2( "FASTBuildFastCancelTest2" );
     SystemMutex mutex3( "FASTBuildFastCancelTest3" );
     SystemMutex mutex4( "FASTBuildFastCancelTest4" );
-    SystemMutex * mutexes[] = { &mutex1, &mutex2, &mutex3, &mutex4 };
+    SystemMutex* mutexes[] = { &mutex1, &mutex2, &mutex3, &mutex4 };
 
     // Create thread that will abort build once all processes are spawned
     Thread::ThreadHandle h = Thread::CreateThread( CancelHelperThread );
 
     // Start build and check it was aborted
     TEST_ASSERT( fBuild.Build( "Cancel" ) == false );
-    TEST_ASSERT( GetRecordedOutput().Find( "FBuild: Error: BUILD FAILED: Cancel" ) );
+    TEST_ASSERT( GetRecordedOutput().Find( "FBuild: Error: BUILD FAILED: Cancel" ) )
 
     Thread::WaitForThread( h );
     Thread::CloseHandle( h );

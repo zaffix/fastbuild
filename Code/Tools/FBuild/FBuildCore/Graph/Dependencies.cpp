@@ -17,7 +17,7 @@
 //------------------------------------------------------------------------------
 void Dependencies::Save( IOStream & stream ) const
 {
-    const size_t numDeps = GetSize();
+    size_t numDeps = GetSize();
     stream.Write( (uint32_t)numDeps );
 
     Iter endIt = End();
@@ -26,15 +26,11 @@ void Dependencies::Save( IOStream & stream ) const
         const Dependency & dep = *it;
 
         // Nodes are saved by index to simplify deserialization
-        const uint32_t index = dep.GetNode()->GetIndex();
+        uint32_t index = dep.GetNode()->GetIndex();
         stream.Write( index );
 
-        // Save stamp
-        const uint64_t stamp = dep.GetNodeStamp();
-        stream.Write( stamp );
-
         // Save weak flag
-        const bool isWeak = dep.IsWeak();
+        bool isWeak = dep.IsWeak();
         stream.Write( isWeak );
     }
 }
@@ -43,14 +39,15 @@ void Dependencies::Save( IOStream & stream ) const
 //------------------------------------------------------------------------------
 bool Dependencies::Load( NodeGraph & nodeGraph, IOStream & stream )
 {
-    ASSERT( IsEmpty() );
-
     uint32_t numDeps;
     if ( stream.Read( numDeps ) == false )
     {
         return false;
     }
-    SetCapacity( numDeps );
+    if ( GetCapacity() < GetSize() + numDeps )
+    {
+        SetCapacity( GetSize() + numDeps );
+    }
     for ( uint32_t i=0; i<numDeps; ++i )
     {
         // Read node index
@@ -64,13 +61,6 @@ bool Dependencies::Load( NodeGraph & nodeGraph, IOStream & stream )
         Node * node = nodeGraph.GetNodeByIndex( index );
         ASSERT( node );
 
-        // Read Stamp
-        uint64_t stamp;
-        if ( stream.Read( stamp ) == false )
-        {
-            return false;
-        }
-
         // Read weak flag
         bool isWeak( false );
         if ( stream.Read( isWeak ) == false )
@@ -79,7 +69,7 @@ bool Dependencies::Load( NodeGraph & nodeGraph, IOStream & stream )
         }
 
         // Recombine dependency info
-        EmplaceBack( node, stamp, isWeak );
+        Append( Dependency( node, isWeak ) );
     }
     return true;
 }

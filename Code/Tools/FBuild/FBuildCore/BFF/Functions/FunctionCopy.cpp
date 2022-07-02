@@ -31,7 +31,7 @@ FunctionCopy::FunctionCopy()
 
 // Commit
 //------------------------------------------------------------------------------
-/*virtual*/ bool FunctionCopy::Commit( NodeGraph & nodeGraph, const BFFToken * funcStartIter ) const
+/*virtual*/ bool FunctionCopy::Commit( NodeGraph & nodeGraph, const BFFIterator & funcStartIter ) const
 {
     // make sure all required variables are defined
     Array< AString > sources( 16, true );
@@ -81,7 +81,7 @@ FunctionCopy::FunctionCopy()
         return false; // GetNodeList will have emitted an error
     }
     Array< AString > preBuildDependencyNames( preBuildDependencies.GetSize(), false );
-    for ( const Dependency & dep : preBuildDependencies )
+    for ( const auto & dep : preBuildDependencies )
     {
         preBuildDependencyNames.Append( dep.GetNode()->GetName() );
     }
@@ -163,7 +163,7 @@ FunctionCopy::FunctionCopy()
             return false; // Initialize will have emitted an error
         }
 
-        copyNodes.EmplaceBack( copyFileNode );
+        copyNodes.Append( Dependency( copyFileNode ) );
     }
 
     // handle alias creation
@@ -172,12 +172,12 @@ FunctionCopy::FunctionCopy()
 
 // GetSourceNodes
 //------------------------------------------------------------------------------
-bool FunctionCopy::GetSourceNodes( const BFFToken * iter, Node * node, Array< Node * > & nodes ) const
+bool FunctionCopy::GetSourceNodes( const BFFIterator & iter, Node * node, Array< Node * > & nodes ) const
 {
     if ( node->GetType() == Node::ALIAS_NODE )
     {
         // resolve aliases to real nodes
-        const AliasNode * aliasNode = node->CastTo< AliasNode >();
+        AliasNode * aliasNode = node->CastTo< AliasNode >();
         const Dependencies & aliasedNodes = aliasNode->GetAliasedNodes();
         const Dependency * const end = aliasedNodes.End();
         for ( const Dependency * it = aliasedNodes.Begin(); it != end; ++it )

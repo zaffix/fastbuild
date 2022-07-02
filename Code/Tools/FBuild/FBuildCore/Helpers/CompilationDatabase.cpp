@@ -13,7 +13,6 @@
 #include "Tools/FBuild/FBuildCore/Graph/ObjectListNode.h"
 #include "Tools/FBuild/FBuildCore/Graph/ObjectNode.h"
 #include "Tools/FBuild/FBuildCore/Graph/UnityNode.h"
-#include "Tools/FBuild/FBuildCore/Helpers/JSON.h"
 
 // Core
 #include "Core/Strings/AStackString.h"
@@ -27,7 +26,7 @@ CompilationDatabase::CompilationDatabase()
 : m_Output( 4 * 1024 * 1024 )
 {
     m_DirectoryEscaped = FBuild::Get().GetWorkingDir();
-    JSON::Escape( m_DirectoryEscaped );
+    JSONEscape( m_DirectoryEscaped );
 }
 
 // DESTRUCTOR
@@ -45,7 +44,7 @@ const AString & CompilationDatabase::Generate( const NodeGraph & nodeGraph, Depe
     visited.SetSize( numNodes );
     memset( visited.Begin(), 0, numNodes );
 
-    VisitNodes( nodeGraph, dependencies, visited );
+    VisitNodes( dependencies, visited );
 
     // Remove last comma
     for ( uint32_t i = m_Output.GetLength() - 1; i != 0; --i )
@@ -70,16 +69,14 @@ const AString & CompilationDatabase::Generate( const NodeGraph & nodeGraph, Depe
 
 // VisitNodes
 //------------------------------------------------------------------------------
-void CompilationDatabase::VisitNodes( const NodeGraph & nodeGraph,
-                                      const Dependencies & dependencies,
-                                      Array< bool > & visited )
+void CompilationDatabase::VisitNodes( const Dependencies & dependencies, Array< bool > & visited )
 {
     for ( const Dependency & dep : dependencies )
     {
-        const Node * node = dep.GetNode();
+        Node * node = dep.GetNode();
 
         // Skip already visited nodes
-        const uint32_t nodeIndex = node->GetIndex();
+        uint32_t nodeIndex = node->GetIndex();
         ASSERT( nodeIndex != INVALID_NODE_INDEX );
         if ( visited[ nodeIndex ] )
         {
@@ -87,9 +84,9 @@ void CompilationDatabase::VisitNodes( const NodeGraph & nodeGraph,
         }
         visited[ nodeIndex ] = true;
 
-        VisitNodes( nodeGraph, node->GetPreBuildDependencies(), visited );
-        VisitNodes( nodeGraph, node->GetStaticDependencies(), visited );
-        VisitNodes( nodeGraph, node->GetDynamicDependencies(), visited );
+        VisitNodes( node->GetPreBuildDependencies(), visited );
+        VisitNodes( node->GetStaticDependencies(), visited );
+        VisitNodes( node->GetDynamicDependencies(), visited );
 
         switch ( node->GetType() )
         {
@@ -101,12 +98,12 @@ void CompilationDatabase::VisitNodes( const NodeGraph & nodeGraph,
             }
             case Node::OBJECT_LIST_NODE:
             {
-                HandleObjectListNode( nodeGraph, node->CastTo< ObjectListNode >() );
+                HandleObjectListNode( node->CastTo< ObjectListNode >() );
                 break;
             }
             case Node::LIBRARY_NODE:
             {
-                HandleObjectListNode( nodeGraph, node->CastTo< LibraryNode >() );
+                HandleObjectListNode( node->CastTo< LibraryNode >() );
                 break;
             }
             default: break;
@@ -116,35 +113,17 @@ void CompilationDatabase::VisitNodes( const NodeGraph & nodeGraph,
 
 // HandleObjectListNode
 //------------------------------------------------------------------------------
-void CompilationDatabase::HandleObjectListNode( const NodeGraph & nodeGraph, ObjectListNode * node )
+void CompilationDatabase::HandleObjectListNode( ObjectListNode * node )
 {
     ObjectListContext ctx;
     ctx.m_DB = this;
     ctx.m_ObjectListNode = node;
 
-    const Node * compilerNode = nodeGraph.FindNode( node->GetCompiler() );
+    const CompilerNode * compiler = node->GetCompiler();
+    const bool isMSVC = ( compiler->GetCompilerFamily() == CompilerNode::MSVC );
 
-    // Check for MSVC
-    const bool isMSVC = compilerNode &&
-                        ( compilerNode->GetType() == Node::COMPILER_NODE ) &&
-                        ( compilerNode->CastTo< CompilerNode >()->GetCompilerFamily() == CompilerNode::MSVC );
-
-    // Get the compiler executable name
-    if ( compilerNode )
-    {
-        if ( compilerNode->GetType() == Node::COMPILER_NODE )
-        {
-            // Use the name of the executable when dealing with an actual CompilerNode
-            ctx.m_CompilerEscaped = compilerNode->CastTo< CompilerNode >()->GetExecutable();
-        }
-        else
-        {
-            // For other ndoes, fallback to the name of the node
-            ctx.m_CompilerEscaped = compilerNode->GetName();
-        }
-    }
-
-    JSON::Escape( ctx.m_CompilerEscaped );
+    ctx.m_CompilerEscaped = compiler->GetExecutable();
+    JSONEscape( ctx.m_CompilerEscaped );
 
     // Prepare arguments: tokenize, remove problematic arguments, remove extra quoting and escape.
     node->GetCompilerOptions().Tokenize( ctx.m_ArgumentsEscaped );
@@ -160,7 +139,7 @@ void CompilationDatabase::HandleObjectListNode( const NodeGraph & nodeGraph, Obj
             continue;
         }
         Unquote( argument );
-        JSON::Escape( argument );
+        JSONEscape( argument );
     }
 
     node->EnumerateInputFiles( &CompilationDatabase::HandleInputFile, &ctx );
@@ -180,11 +159,11 @@ void CompilationDatabase::HandleInputFile( const AString & inputFile, const AStr
 {
     AStackString<> inputFileEscaped;
     inputFileEscaped = inputFile;
-    JSON::Escape( inputFileEscaped );
+    JSONEscape( inputFileEscaped );
 
     AStackString<> outputFileEscaped;
     ctx->m_ObjectListNode->GetObjectFileName( inputFile, baseDir, outputFileEscaped );
-    JSON::Escape( outputFileEscaped );
+    JSONEscape( outputFileEscaped );
 
     m_Output += "  {\n    \"directory\": \"";
     m_Output += m_DirectoryEscaped;
@@ -232,6 +211,54 @@ void CompilationDatabase::HandleInputFile( const AString & inputFile, const AStr
         m_Output += "\"";
     }
     m_Output += "]\n  },\n";
+}
+
+
+// JSONEscape
+//------------------------------------------------------------------------------
+/*static*/ void CompilationDatabase::JSONEscape( AString & string )
+{
+    // Build result in a temporary buffer
+    AStackString< 8192 > temp;
+
+    const char * end = string.GetEnd();
+    for ( const char * pos = string.Get(); pos != end; ++pos )
+    {
+        const char c = *pos;
+
+        // congrol character?
+        if ( c <= 0x1F )
+        {
+            // escape with backslash if possible
+            if ( c == '\b' ) { temp += "\\b"; continue; }
+            if ( c == '\t' ) { temp += "\\t"; continue; }
+            if ( c == '\n' ) { temp += "\\n"; continue; }
+            if ( c == '\f' ) { temp += "\\f"; continue; }
+            if ( c == '\r' ) { temp += "\\r"; continue; }
+
+            // escape with codepoint
+            temp.AppendFormat( "\\u%04X", c );
+            continue;
+        }
+        else if ( c == '\"' )
+        {
+            // escape quotes
+            temp += "\\\"";
+            continue;
+        }
+        else if ( c == '\\' )
+        {
+            // escape backslashes
+            temp += "\\\\";
+            continue;
+        }
+
+        // char does not need escpaing
+        temp += c;
+    }
+
+    // store final result
+    string = temp;
 }
 
 // Unquote

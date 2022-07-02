@@ -4,8 +4,6 @@
 
 // Includes
 //------------------------------------------------------------------------------
-#include "Tools/FBuild/FBuildCore/BFF/BFFFileExists.h"
-#include "Tools/FBuild/FBuildCore/BFF/BFFUserFunctions.h"
 #include "Tools/FBuild/FBuildCore/FBuildOptions.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
 #include "Helpers/FBuildStats.h"
@@ -18,6 +16,7 @@
 
 // Forward Declarations
 //------------------------------------------------------------------------------
+class BFFMacros;
 class Client;
 class Dependencies;
 class FileStream;
@@ -33,7 +32,7 @@ class FBuild : public Singleton< FBuild >
 {
 public:
     explicit FBuild( const FBuildOptions & options = FBuildOptions() );
-    virtual ~FBuild();
+    ~FBuild();
 
     // initialize the dependency graph, using the BFF config file
     // OR a previously saved NodeGraph DB (if available/matching the BFF)
@@ -43,7 +42,7 @@ public:
     bool Build( const char * target );
     bool Build( const AString & target );
     bool Build( const Array< AString > & targets );
-    virtual bool Build( Node * nodeToBuild ); // Virtual to allow for testing
+    bool Build( Node * nodeToBuild );
 
     // after a build we can store progress/parsed rules for next time
     bool SaveDependencyGraph( const char * nodeGraphDBFile ) const;
@@ -63,7 +62,6 @@ public:
 
     void DisplayTargetList( bool showHidden ) const;
     bool DisplayDependencyDB( const Array< AString > & targets ) const;
-    bool GenerateDotGraph( const Array< AString > & targets, const bool fullGraph ) const;
     bool GenerateCompilationDatabase( const Array< AString > & targets ) const;
 
     class EnvironmentVarAndHash
@@ -85,11 +83,6 @@ public:
     bool ImportEnvironmentVar( const char * name, bool optional, AString & value, uint32_t & hash );
     const Array< EnvironmentVarAndHash > & GetImportedEnvironmentVars() const { return m_ImportedEnvironmentVars; }
 
-    bool AddFileExistsCheck( const AString & fileName );
-    BFFFileExists & GetFileExistsInfo() { return m_FileExistsInfo; }
-
-    BFFUserFunctions & GetUserFunctions() { return m_UserFunctions; }
-
     void GetLibEnvVar( AString & libEnvVar ) const;
 
     // stats - read access
@@ -110,8 +103,6 @@ public:
     bool CacheOutputInfo() const;
     bool CacheTrim() const;
 
-    uint32_t GetNumWorkerConnections() const;
-
 protected:
     bool GetTargets( const Array< AString > & targets, Dependencies & outDeps ) const;
 
@@ -119,6 +110,8 @@ protected:
 
     static bool s_StopBuild;
     static volatile bool s_AbortBuild;  // -fastcancel - TODO:C merge with StopBuild
+
+    BFFMacros * m_Macros;
 
     NodeGraph * m_DependencyGraph;
     JobQueue * m_JobQueue;
@@ -147,8 +140,6 @@ protected:
     AString     m_LibEnvVar; // LIB= value
 
     Array< EnvironmentVarAndHash > m_ImportedEnvironmentVars;
-    BFFFileExists m_FileExistsInfo;
-    BFFUserFunctions m_UserFunctions;
 };
 
 //------------------------------------------------------------------------------
