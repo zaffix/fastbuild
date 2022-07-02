@@ -40,7 +40,7 @@
 
 // CONSTRUCTOR
 //------------------------------------------------------------------------------
-Worker::Worker( const AString & args, bool consoleMode )
+Worker::Worker( const AString & args, bool consoleMode, const AString& ipAsHostName )
     : m_ConsoleMode( consoleMode )
     , m_MainWindow( nullptr )
     , m_ConnectionPool( nullptr )
@@ -57,6 +57,8 @@ Worker::Worker( const AString & args, bool consoleMode )
     m_WorkerSettings = FNEW( WorkerSettings );
     m_NetworkStartupHelper = FNEW( NetworkStartupHelper );
     m_ConnectionPool = FNEW( Server );
+
+    m_WorkerBrokerage.SetIPAsHostName( ipAsHostName );
 
     Env::GetExePath( m_BaseExeName );
     #if defined( __WINDOWS__ )

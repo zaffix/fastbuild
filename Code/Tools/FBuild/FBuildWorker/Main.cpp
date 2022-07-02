@@ -126,7 +126,7 @@ int Main( const AString & args )
     // start the worker and wait for it to be closed
     int ret;
     {
-        Worker worker( args, options.m_ConsoleMode );
+        Worker worker( args, options.m_ConsoleMode, options.m_IPAsHostName );
         if ( options.m_OverrideCPUAllocation )
         {
             WorkerSettings::Get().SetNumCPUsToUse( options.m_CPUAllocation );

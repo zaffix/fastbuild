@@ -27,6 +27,8 @@ public:
 
     // server interface
     void SetAvailability( bool available );
+
+    void SetIPAsHostName( const AString & ipAsHostName );
 private:
     void InitBrokerage();
     void UpdateBrokerageFilePath();
@@ -38,6 +40,7 @@ private:
     AString             m_HostName;
     AString             m_DomainName;
     AString             m_IPAddress;
+    AString             m_IPAsHostName;
     AString             m_BrokerageFilePath;
     Timer               m_TimerLastUpdate;      // Throttle network access
     Timer               m_TimerLastIPUpdate;    // Throttle dns access

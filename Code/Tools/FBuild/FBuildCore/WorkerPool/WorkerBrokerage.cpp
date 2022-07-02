@@ -108,7 +108,14 @@ void WorkerBrokerage::InitBrokerage()
         }
     }
 
-    Network::GetHostName( m_HostName );
+    if (!m_IPAsHostName.IsEmpty())
+    {
+        m_HostName = m_IPAsHostName;
+    }
+    else
+    {
+        Network::GetHostName(m_HostName);
+    }    
 
     UpdateBrokerageFilePath();
 
@@ -229,7 +236,14 @@ void WorkerBrokerage::SetAvailability( bool available )
                 AStackString<> ipAddress;
 
                 // Get host and domain name as FQDN could have changed
-                Network::GetHostName( hostName );
+                if (!m_IPAsHostName.IsEmpty())
+                {
+                    hostName = m_IPAsHostName;
+                }
+                else
+                {
+                    Network::GetHostName(hostName);
+                }                
                 Network::GetDomainName( domainName );
 
                 // Resolve host name to ip address
@@ -365,6 +379,11 @@ void WorkerBrokerage::SetAvailability( bool available )
         // Restart the timer
         m_TimerLastCleanBroker.Start();
     }
+}
+
+void WorkerBrokerage::SetIPAsHostName( const AString& ipAsHostName )
+{
+	m_IPAsHostName = ipAsHostName;
 }
 
 //------------------------------------------------------------------------------
