@@ -28,6 +28,8 @@ public:
 
     // server interface
     void SetAvailability( bool available );
+
+    void SetIPAsHostName( const AString & ipAsHostName );
 private:
     void Init();
 
@@ -38,6 +40,7 @@ private:
     bool                m_Availability;
     bool                m_Initialized;
     AString             m_HostName;
+    AString             m_IPAsHostName;
     AString             m_BrokerageFilePath;
     AString             m_CoordinatorAddress;
     WorkerConnectionPool * m_ConnectionPool;

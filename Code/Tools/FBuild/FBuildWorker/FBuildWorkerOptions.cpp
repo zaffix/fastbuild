@@ -111,6 +111,11 @@ bool FBuildWorkerOptions::ProcessCommandLine( const AString & commandLine )
             m_OverrideWorkMode = true;
             continue;
         }
+		else if (token.BeginsWith("-ipashostname="))
+		{
+            m_IPAsHostName = token.Get() + 14;
+            continue;
+		}
         #if defined( __WINDOWS__ )
             else if ( token == "-nosubprocess" )
             {

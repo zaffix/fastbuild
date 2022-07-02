@@ -12,7 +12,8 @@
 
 // Forward Declaration
 //------------------------------------------------------------------------------
-class AString;
+//class AString;
+#include "Core/Strings/AString.h"
 
 // FBuildWorkerOptions
 //------------------------------------------------------------------------------
@@ -37,6 +38,8 @@ public:
 
     // Console mode
     bool m_ConsoleMode;
+
+    AString m_IPAsHostName;
 
 private:
     void ShowUsageError();

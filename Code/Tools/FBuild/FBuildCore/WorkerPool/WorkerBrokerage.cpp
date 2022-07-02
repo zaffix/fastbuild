@@ -84,11 +84,18 @@ void WorkerBrokerage::Init()
         return;
     }
 
-    Network::GetHostName(m_HostName);
+	if (!m_IPAsHostName.IsEmpty())
+	{
+		m_HostName = m_IPAsHostName;
+	}
+	else
+	{
+        Network::GetHostName(m_HostName);
 
 #if defined( __APPLE__ )
-    ConvertHostNameToLocalIP4(m_HostName);
+        ConvertHostNameToLocalIP4(m_HostName);
 #endif
+	}    
 
     if ( m_CoordinatorAddress.IsEmpty() == true )
     {
@@ -307,6 +314,11 @@ void WorkerBrokerage::SetAvailability(bool available)
         m_TimerLastUpdate.Start();
     }
     m_Availability = available;
+}
+
+void WorkerBrokerage::SetIPAsHostName(const AString& ipAsHostName)
+{
+	m_IPAsHostName = ipAsHostName;
 }
 
 // ConnectToCoordinator
