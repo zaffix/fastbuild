@@ -1,7 +1,7 @@
 // Visual Studio 2019
 //------------------------------------------------------------------------------
-.VS2019_BasePath         = '$_CURRENT_BFF_DIR_$/2019/Community'
-.VS2019_Version          = '14.22.27905'
+.VS2019_BasePath         = 'C:/Program Files (x86)/Microsoft Visual Studio/2019/Community'
+.VS2019_Version          = '14.29.30133'
 
 // X64 Compiler
 //------------------------------------------------------------------------------
