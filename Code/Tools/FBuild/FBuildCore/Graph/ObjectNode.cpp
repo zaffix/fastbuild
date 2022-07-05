@@ -1677,6 +1677,11 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
                         continue; // skip this token in both cases
                     }
                 }
+
+                if ( StripTokenWithArg_MSVC( "sourceDependencies", token, i ) )
+                {
+                    continue;  // skip this token in both cases
+                }                
             }
         }
 
