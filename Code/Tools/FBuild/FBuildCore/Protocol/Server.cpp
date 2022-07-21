@@ -627,6 +627,7 @@ void Server::FinalizeCompletedJobs()
             ms.Write( job->GetSystemErrorCount() > 0 );
             ms.Write( job->GetMessages() );
             ms.Write( job->GetNode()->GetLastBuildTime() );
+            ms.Write( job->IsDataCompressed() );
 
             // write the data - build result for success, or output+errors for failure
             ms.Write( (uint32_t)job->GetDataSize() );

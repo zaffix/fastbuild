@@ -15,6 +15,7 @@
 #include <Tools/FBuild/FBuildCore/Helpers/MultiBuffer.h>
 #include "Tools/FBuild/FBuildCore/WorkerPool/Job.h"
 #include "Tools/FBuild/FBuildCore/WorkerPool/JobQueue.h"
+#include "Tools/FBuild/FBuildCore/Helpers/Compressor.h"
 
 #include "Core/Env/ErrorFormat.h"
 #include "Core/FileIO/ConstMemoryStream.h"
@@ -473,6 +474,9 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobR
     uint32_t buildTime;
     ms.Read( buildTime );
 
+    bool isDataCompressed = false;
+    ms.Read( isDataCompressed );
+
     // get result data (built data or errors if failed)
     uint32_t size = 0;
     ms.Read( size );
@@ -501,7 +505,7 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobR
     if ( result == true )
     {
         // built ok - serialize to disc
-        MultiBuffer mb( data, ms.GetSize() - ms.Tell() );
+        //MultiBuffer mb( data, ms.GetSize() - ms.Tell() );
 
         ObjectNode * objectNode = job->GetNode()->CastTo< ObjectNode >();
         const AString & nodeName = objectNode->GetName();
@@ -512,6 +516,16 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobR
         }
         else
         {
+            size_t dataSize = ms.GetSize() - ms.Tell();
+            Compressor c;
+            if ( isDataCompressed )
+            {                
+                c.Decompress( data );
+                data = c.GetResult();
+                dataSize = c.GetResultSize();
+            }
+            MultiBuffer mb( data, dataSize );
+            
             size_t fileIndex = 0;
 
             const ObjectNode * on = job->GetNode()->CastTo< ObjectNode >();

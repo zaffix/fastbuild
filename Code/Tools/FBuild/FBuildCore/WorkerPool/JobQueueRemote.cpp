@@ -12,6 +12,7 @@
 #include "Tools/FBuild/FBuildCore/Graph/Node.h"
 #include "Tools/FBuild/FBuildCore/Graph/ObjectNode.h"
 #include "Tools/FBuild/FBuildCore/Helpers/MultiBuffer.h"
+#include "Tools/FBuild/FBuildCore/Helpers/Compressor.h"
 
 // Core
 #include "Core/Env/ErrorFormat.h"
@@ -441,8 +442,12 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
     // transfer data to job
     size_t memSize;
     void * mem = mb.Release( memSize );
-    job->OwnData( mem, memSize );
+    //job->OwnData( mem, memSize );
 
+    Compressor c;
+    c.Compress( mem, memSize );
+    job->OwnData( c.ReleaseResult(), c.GetResultSize(), true );
+    
     return true;
 }
 
